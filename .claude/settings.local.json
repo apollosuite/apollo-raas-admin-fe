@@ -6,7 +6,9 @@
       "Bash(npx vue-tsc --noEmit)",
       "Bash(npx vue-tsc:*)",
       "Bash(powershell -Command:*)",
-      "Bash(python -c:*)"
+      "Bash(python -c:*)",
+      "Bash(tail:*)",
+      "Bash(head:*)"
     ]
   }
 }

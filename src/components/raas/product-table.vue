@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { onClickOutside } from '@vueuse/core'
+import { ChevronDown, Info, X } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
@@ -9,7 +11,7 @@ import type {
   ProductCreate,
   ProductFilter,
   ProductListParams,
-  ProgressItem,
+  ProductProgress,
 } from '@/services/types/raas.type'
 
 import { Badge } from '@/components/ui/badge'
@@ -30,22 +32,34 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useRaasApi } from '@/services/api/raas.api'
 
 const props = defineProps<{
   filters: ProductFilter
 }>()
 
+const emit = defineEmits<{
+  (e: 'productsLoaded', products: ProductProgress[]): void
+}>()
+
 const { t } = useI18n()
 
 const {
-  useGetProducts,
+  useGetProductProgress,
   useCreateProduct,
   useUpdateProduct,
   useCancelProduct,
-  useFetchBsr,
-  useUpdateProgressTracking,
+  useFetchKeepaData,
+  useGetLastUpdateTime,
+  useTriggerDataUpdate,
+  useGetHannaOrgs,
+  useGetAmazonProfiles,
 } = useRaasApi()
 
 // Pagination
@@ -79,11 +93,15 @@ const queryParams = computed<ProductListParams>(() => {
 })
 
 // Queries - API will automatically react to queryParams changes
-const { data: productsData, isLoading: loading } = useGetProducts(queryParams)
+// 使用合并后的产品进度API
+const { data: productProgressData, isLoading: loading } = useGetProductProgress(queryParams)
+
+// 新增：获取最后更新时间
+const { data: lastUpdateTimeData, refetch: refetchLastUpdateTime } = useGetLastUpdateTime()
 
 // Update total when data changes
 watch(
-  () => productsData.value?.total,
+  () => productProgressData.value?.total,
   (newTotal) => {
     if (newTotal !== undefined) {
       pagination.value.total = newTotal
@@ -91,39 +109,295 @@ watch(
   },
 )
 
+// Emit products data when loaded
+watch(
+  () => productProgressData.value?.items,
+  (items) => {
+    if (items && items.length > 0) {
+      emit('productsLoaded', items)
+    }
+  },
+  { immediate: true },
+)
+
 // Mutations
 const { mutate: createProduct } = useCreateProduct()
 const { mutate: updateProduct } = useUpdateProduct()
 const { mutate: cancelProduct } = useCancelProduct()
-const { mutate: fetchBsr } = useFetchBsr()
-const { mutate: updateProgressTracking } = useUpdateProgressTracking()
+const { mutate: fetchKeepaData } = useFetchKeepaData()
+const { mutate: triggerDataUpdate, isPending: isUpdating } = useTriggerDataUpdate()
 
-const tableData = computed(() => productsData.value?.items || [])
+const tableData = computed(() => productProgressData.value?.items || [])
 
-const progressMap = ref<Record<string, ProgressItem>>({})
+// 获取当前选择的广告窗口
+const currentAdWindow = computed(() => props.filters.ad_window || '30d')
+
+// 根据当前ad_window获取广告数据的辅助函数（扁平字段格式）
+function getAdData(product: ProductProgress): { ad_spend?: number, ad_sales?: number, ad_orders?: number, acos?: number } | undefined {
+  const adWindow = currentAdWindow.value
+  const prefix = adWindow === '7d' ? '7d' : adWindow === '14d' ? '14d' : adWindow === 'rt' ? 'rt' : '30d'
+  return {
+    ad_spend: product[`ad_spend_${prefix}` as keyof ProductProgress] as number | undefined,
+    ad_sales: product[`ad_sales_${prefix}` as keyof ProductProgress] as number | undefined,
+    ad_orders: product[`ad_orders_${prefix}` as keyof ProductProgress] as number | undefined,
+    acos: product[`acos_${prefix}` as keyof ProductProgress] as number | undefined,
+  }
+}
+
+// Marketplace 货币符号映射
+const marketplaceCurrencyMap: Record<string, string> = {
+  US: '$',
+  // 可以根据需要添加更多市场的货币符号
+}
+
+// 获取货币符号
+function getCurrencySymbol(marketplace?: string): string {
+  return marketplaceCurrencyMap[marketplace || 'US'] || '$'
+}
+
+// 格式化百分比显示（乘以100并添加%后缀）
+function formatPercent(value: number | null | undefined): string {
+  if (value == null)
+    return '-'
+  return `${(value * 100).toFixed(2)}%`
+}
+
+// 格式化货币显示
+function formatCurrency(value: number | null | undefined, marketplace?: string): string {
+  if (value == null)
+    return '-'
+  const symbol = getCurrencySymbol(marketplace)
+  return `${symbol}${value.toFixed(2)}`
+}
+
+// 格式化 Keepa 时间显示
+function formatKeepaTime(keepaTime: string): string {
+  // 保持原始格式，或者可以根据需要进行格式化
+  return keepaTime
+}
+
+// 格式化 Keepa 类目选项显示文本
+function formatKeepaCategoryItem(category: { category_name: string, sales_rank: number | null, keepa_time: string }): string {
+  return `${category.category_name} - ${category.sales_rank ?? 'N/A'} - ${formatKeepaTime(category.keepa_time)}`
+}
+
 const selectedRowKeys = ref<Set<string>>(new Set())
 
 const modalOpen = ref(false)
 const modalTitle = ref('')
 const isEditing = ref(false)
 
-const formData = ref<ProductCreate & { _asin_text: string }>({
+const formData = ref<ProductCreate>({
   amazon_profile_name: '',
   hanna_org_name: '',
-  asin_list: [],
-  _asin_text: '',
+  asin: '',
   category_name: '',
   raas_plan: '',
   start_date: '',
   end_date: '',
   baseline_sales_rank: null,
+  target_acos: null,
+  target_ad_spend: null,
   status: undefined,
   marketplace: 'US',
 })
 
-const bsrLoading = ref(false)
 const bsrPending = ref(false)
-const trackingLoading = ref(false)
+
+// 新增：获取 Hanna Org 和 Amazon Profile 列表（用于新增产品时的级联选择）
+const { data: hannaOrgsData, isLoading: hannaOrgsLoading } = useGetHannaOrgs()
+
+// 用于筛选 Amazon Profile 的 Hanna Org 名称
+const selectedHannaOrgForFilter = computed(() => {
+  // 如果用户已经选择了 Hanna Org，用它来筛选
+  // 如果用户已经选择了 Amazon Profile，用它的关联 Hanna Org 来筛选
+  if (formData.value.hanna_org_name) {
+    return formData.value.hanna_org_name
+  }
+  return undefined
+})
+
+const { data: amazonProfilesData, isLoading: amazonProfilesLoading } = useGetAmazonProfiles(selectedHannaOrgForFilter)
+
+// Keepa data fetching states
+const keepaLoading = ref(false)
+const keepaCategories = ref<{ category_id: number, category_name: string, sales_rank: number | null, keepa_time: string }[]>([])
+const keepaFetched = ref(false)
+
+// 只显示有 sales_rank 的类目（过滤掉 sales_rank 为 null 的选项）
+const keepaCategoriesWithRank = computed(() => {
+  return keepaCategories.value.filter(cat => cat.sales_rank != null)
+})
+
+// 新增：Hanna Org 和 Amazon Profile 下拉框状态
+const hannaOrgDropdownOpen = ref(false)
+const amazonProfileDropdownOpen = ref(false)
+const hannaOrgSearch = ref('')
+const amazonProfileSearch = ref('')
+const hannaOrgDropdownRef = ref<HTMLElement | null>(null)
+const amazonProfileDropdownRef = ref<HTMLElement | null>(null)
+
+// 点击外部关闭下拉框
+onClickOutside(hannaOrgDropdownRef, () => {
+  hannaOrgDropdownOpen.value = false
+})
+onClickOutside(amazonProfileDropdownRef, () => {
+  amazonProfileDropdownOpen.value = false
+})
+
+// 过滤后的 Hanna Org 列表
+const filteredHannaOrgs = computed(() => {
+  const items = hannaOrgsData.value?.items || []
+  if (!hannaOrgSearch.value)
+    return items
+  return items.filter(org =>
+    org.hanna_org_name.toLowerCase().includes(hannaOrgSearch.value.toLowerCase()),
+  )
+})
+
+// 过滤后的 Amazon Profile 列表
+const filteredAmazonProfiles = computed(() => {
+  const items = amazonProfilesData.value?.items || []
+  if (!amazonProfileSearch.value)
+    return items
+  return items.filter(profile =>
+    profile.amazon_profile_name.toLowerCase().includes(amazonProfileSearch.value.toLowerCase()),
+  )
+})
+
+// 新增：级联选择逻辑 - Hanna Org 和 Amazon Profile
+// 当选择 Amazon Profile 时，自动填充对应的 Hanna Org
+watch(
+  () => formData.value.amazon_profile_name,
+  (newAmazonProfile) => {
+    if (newAmazonProfile && amazonProfilesData.value?.items) {
+      const selectedProfile = amazonProfilesData.value.items.find(p => p.amazon_profile_name === newAmazonProfile)
+      if (selectedProfile && !formData.value.hanna_org_name) {
+        formData.value.hanna_org_name = selectedProfile.hanna_org_name
+      }
+    }
+  },
+)
+
+// 当选择 Hanna Org 时，如果当前选中的 Amazon Profile 不属于该组织，则清空 Amazon Profile
+watch(
+  () => formData.value.hanna_org_name,
+  (newHannaOrg) => {
+    if (newHannaOrg && formData.value.amazon_profile_name && amazonProfilesData.value?.items) {
+      const selectedProfile = amazonProfilesData.value.items.find(p => p.amazon_profile_name === formData.value.amazon_profile_name)
+      if (selectedProfile && selectedProfile.hanna_org_name !== newHannaOrg) {
+        formData.value.amazon_profile_name = ''
+      }
+    }
+  },
+)
+
+// 新增：数据更新相关状态
+const hasTriggeredUpdate = ref(false)
+// 冷却时间配置（秒）
+const UPDATE_COOLDOWN_SECONDS = 60
+const updateCooldownRemaining = ref(0)
+let updateCooldownTimer: ReturnType<typeof setInterval> | null = null
+
+// 计算显示的最后更新时间
+const displayLastUpdateTime = computed(() => {
+  // 如果点击过更新按钮，显示"更新中"
+  if (hasTriggeredUpdate.value) {
+    return t('raas.actions.updating')
+  }
+  // 否则显示从API获取的最后更新时间
+  if (lastUpdateTimeData.value?.last_updated_at) {
+    return lastUpdateTimeData.value.last_updated_at
+  }
+  // 如果没有数据，显示"暂无数据"
+  return t('raas.messages.noDataYet')
+})
+
+// 计算距离上次更新的时间（秒）
+const timeSinceLastUpdate = computed(() => {
+  if (!lastUpdateTimeData.value?.last_updated_at)
+    return Infinity
+  const lastUpdate = new Date(lastUpdateTimeData.value.last_updated_at)
+  return Math.floor((Date.now() - lastUpdate.getTime()) / 1000)
+})
+
+// 计算是否处于冷却期
+const isInCooldown = computed(() => updateCooldownRemaining.value > 0)
+
+// 计算更新按钮是否应该被禁用
+const isUpdateDisabled = computed(() => {
+  // 正在更新中
+  if (isUpdating.value || hasTriggeredUpdate.value)
+    return true
+  // 在冷却期内
+  if (isInCooldown.value)
+    return true
+  // 距离上次更新不足最小间隔（30秒）
+  const MIN_UPDATE_INTERVAL = 30
+  if (timeSinceLastUpdate.value < MIN_UPDATE_INTERVAL)
+    return true
+  return false
+})
+
+// 计算更新按钮的文本
+const updateButtonText = computed(() => {
+  if (hasTriggeredUpdate.value || isUpdating.value)
+    return t('raas.actions.updating')
+  if (isInCooldown.value)
+    return `${t('raas.dashboard.updateData')} (${updateCooldownRemaining.value}s)`
+  return t('raas.dashboard.updateData')
+})
+
+// 启动冷却倒计时
+function startUpdateCooldown() {
+  updateCooldownRemaining.value = UPDATE_COOLDOWN_SECONDS
+  if (updateCooldownTimer)
+    clearInterval(updateCooldownTimer)
+  updateCooldownTimer = setInterval(() => {
+    updateCooldownRemaining.value--
+    if (updateCooldownRemaining.value <= 0) {
+      if (updateCooldownTimer) {
+        clearInterval(updateCooldownTimer)
+        updateCooldownTimer = null
+      }
+    }
+  }, 1000)
+}
+
+// 处理更新数据按钮点击
+function handleUpdateData() {
+  // 检查是否可以更新
+  if (isUpdateDisabled.value) {
+    const remaining = Math.max(0, UPDATE_COOLDOWN_SECONDS - timeSinceLastUpdate.value)
+    if (remaining > 0 && remaining < UPDATE_COOLDOWN_SECONDS) {
+      toast.info(`${t('raas.messages.updateTooFrequent')} ${remaining}${t('raas.messages.seconds')}`)
+    }
+    return
+  }
+
+  hasTriggeredUpdate.value = true
+
+  triggerDataUpdate(undefined, {
+    onSuccess: (response) => {
+      if (response.success) {
+        toast.success(t('raas.messages.updateDataSuccess'))
+        // 启动冷却倒计时
+        startUpdateCooldown()
+        // 刷新最后更新时间
+        refetchLastUpdateTime()
+      }
+      else {
+        toast.error(response.message || t('raas.messages.updateDataFailed'))
+      }
+    },
+    onError: () => {
+      toast.error(t('raas.messages.updateDataFailed'))
+    },
+    onSettled: () => {
+      hasTriggeredUpdate.value = false
+    },
+  })
+}
 
 const raasPlanOptions = [
   { label: 'Climb Plan', value: 'Climb Plan' },
@@ -146,9 +420,7 @@ const statusVariantMap: Record<string, 'default' | 'secondary' | 'destructive' |
 
 // ---- Composite key helpers ----
 function compositeKey(row: Product | ProductCompositeKey): string {
-  const asins = Array.isArray(row.asin_list)
-    ? [...row.asin_list].sort().join(',')
-    : ''
+  const asins = row.asin || ''
   return `${row.amazon_profile_name}||${row.hanna_org_name}||${asins}||${row.category_name}||${row.raas_plan}||${row.start_date}`
 }
 
@@ -156,7 +428,7 @@ function toCompositeKeyObj(row: Product): ProductCompositeKey {
   return {
     amazon_profile_name: row.amazon_profile_name,
     hanna_org_name: row.hanna_org_name,
-    asin_list: row.asin_list,
+    asin: row.asin,
     category_name: row.category_name,
     raas_plan: row.raas_plan,
     start_date: row.start_date,
@@ -166,23 +438,19 @@ function toCompositeKeyObj(row: Product): ProductCompositeKey {
 // ---- Flattened Rows ----
 interface FlattenedRow {
   _key: string
-  product: Product
+  product: ProductProgress
   asin: string
-  progress?: ProgressItem
 }
 
 const flattenedRows = computed<FlattenedRow[]>(() => {
   const rows: FlattenedRow[] = []
-  tableData.value.forEach((product: Product) => {
-    const asins = (product.asin_list && product.asin_list.length > 0) ? product.asin_list : ['']
-    const pKey = compositeKey(product)
-    asins.forEach((asin: string, index: number) => {
-      rows.push({
-        _key: `${pKey}_${asin}_${index}`,
-        product,
-        asin,
-        progress: progressMap.value[asin],
-      })
+  tableData.value.forEach((product: ProductProgress) => {
+    const asin = product.asin || ''
+    const pKey = `${product.amazon_profile_name}||${product.hanna_org_name}||${asin}||${product.category_name}||${product.raas_plan}||${product.start_date}`
+    rows.push({
+      _key: `${pKey}_${asin}`,
+      product,
+      asin,
     })
   })
   return rows
@@ -220,9 +488,9 @@ const partiallySelected = computed(() => {
 })
 
 // ---- Selected products (deduplicated) ----
-const selectedProducts = computed<Product[]>(() => {
+const selectedProducts = computed<ProductProgress[]>(() => {
   const seen = new Set<string>()
-  const products: Product[] = []
+  const products: ProductProgress[] = []
   flattenedRows.value.forEach((row) => {
     if (selectedRowKeys.value.has(row._key)) {
       const pk = compositeKey(row.product)
@@ -268,56 +536,7 @@ function handleCancelSelected() {
   }
 }
 
-// ---- Tracking ----
-async function handleConfirmTracking() {
-  const selectedRows = flattenedRows.value.filter(r => selectedRowKeys.value.has(r._key))
-  const asinsToTrack = [...new Set(selectedRows.map(r => r.asin).filter(Boolean))]
-
-  if (asinsToTrack.length === 0) {
-    toast.warning(t('raas.messages.selectValidAsin'))
-    return
-  }
-
-  trackingLoading.value = true
-
-  updateProgressTracking(
-    {
-      asin_list: asinsToTrack,
-      ad_window: props.filters.ad_window || '30',
-    },
-    {
-      onSuccess: (response) => {
-        if (response) {
-          const newMap = { ...progressMap.value }
-          response.items.forEach((item: ProgressItem) => {
-            if (item.asin) {
-              newMap[item.asin] = item
-            }
-          })
-          progressMap.value = newMap
-          toast.success(t('raas.messages.progressUpdated', { count: response.items.length }))
-        }
-      },
-      onError: () => {
-        toast.error(t('raas.messages.progressFailed'))
-      },
-      onSettled: () => {
-        trackingLoading.value = false
-      },
-    },
-  )
-}
-
 // ---- Pagination ----
-function parseAsinText(text: string): string[] {
-  return text.split(',').map(s => s.trim()).filter(Boolean)
-}
-
-function formatAsinList(arr: string[] | undefined): string {
-  if (!arr || arr.length === 0)
-    return ''
-  return arr.join(', ')
-}
 
 // ---- Modal: Add / Edit ----
 function handleAdd() {
@@ -326,135 +545,121 @@ function handleAdd() {
   formData.value = {
     amazon_profile_name: '',
     hanna_org_name: '',
-    asin_list: [],
-    _asin_text: '',
+    asin: '',
     category_name: '',
     raas_plan: '',
     start_date: '',
     end_date: '',
     baseline_sales_rank: null,
+    target_acos: null,
+    target_ad_spend: null,
     status: undefined,
     marketplace: 'US',
   }
   bsrPending.value = false
+  // Reset keepa states
+  keepaLoading.value = false
+  keepaCategories.value = []
+  keepaFetched.value = false
   modalOpen.value = true
 }
 
-function handleEdit(row: Product) {
+function handleEdit(row: ProductProgress) {
   modalTitle.value = t('raas.modal.editProduct')
   isEditing.value = true
   formData.value = {
     amazon_profile_name: row.amazon_profile_name || '',
     hanna_org_name: row.hanna_org_name || '',
-    asin_list: row.asin_list || [],
-    _asin_text: formatAsinList(row.asin_list),
+    asin: row.asin || '',
     category_name: row.category_name || '',
     raas_plan: row.raas_plan || '',
     start_date: row.start_date || '',
     end_date: row.end_date || '',
     baseline_sales_rank: row.baseline_sales_rank ?? null,
+    // 后端存储的是小数（如 0.25），前端显示需要乘以 100（如 25）
+    target_acos: row.target_acos != null ? row.target_acos * 100 : null,
+    target_ad_spend: row.target_ad_spend ?? null,
     status: row.status || 'ONGOING',
     marketplace: row.marketplace || 'US',
   }
   bsrPending.value = false
+  // Reset keepa states
+  keepaLoading.value = false
+  keepaCategories.value = []
+  keepaFetched.value = false
   modalOpen.value = true
 }
 
-// ---- BSR: form dialog ----
-async function handleFetchBsr() {
-  const asins = parseAsinText(formData.value._asin_text)
-  if (asins.length === 0 || !formData.value.category_name) {
-    toast.error(t('raas.messages.enterAsinCategory'))
+// ---- Keepa: Fetch product categories and sales ranks ----
+async function handleFetchKeepaData() {
+  if (!formData.value.asin) {
+    toast.error(t('raas.messages.enterAsin'))
     return
   }
 
-  bsrLoading.value = true
+  // 验证 start_date 是否已填写
+  if (!formData.value.start_date) {
+    toast.error(t('raas.messages.enterStartDate'))
+    return
+  }
 
-  fetchBsr({
-    asin_list: asins,
-    category_name: formData.value.category_name,
+  keepaLoading.value = true
+  keepaFetched.value = false
+  keepaCategories.value = []
+  formData.value.category_name = ''
+  formData.value.baseline_sales_rank = null
+
+  fetchKeepaData({
+    asin: formData.value.asin,
+    raas_start_date: formData.value.start_date,
   }, {
     onSuccess: (res) => {
-      if (res.status === 'found' && res.baseline_sales_rank != null) {
-        formData.value.baseline_sales_rank = res.baseline_sales_rank
-        toast.success(t('raas.messages.fetchSuccess'))
-      }
-      else if (res.status === 'fetching_triggered') {
-        bsrPending.value = true
-        formData.value.baseline_sales_rank = null
-        toast.info(res.message || t('raas.messages.fetchingRefreshLater'))
+      if (res.success && res.categories && res.categories.length > 0) {
+        keepaCategories.value = res.categories
+        keepaFetched.value = true
+        // 只统计有 sales_rank 的类目数量（与下拉框显示保持一致）
+        const categoriesWithRank = res.categories.filter(cat => cat.sales_rank != null).length
+        toast.success(t('raas.messages.keepaFetchSuccess', { count: categoriesWithRank }))
       }
       else {
-        toast.error(res.message || t('raas.messages.fetchFailed'))
+        toast.error(res.message || t('raas.messages.keepaFetchFailed'))
       }
     },
-    onError: () => {
-      toast.error(t('raas.messages.requestFailed'))
+    onError: (error: any) => {
+      // 显示详细的错误信息
+      const errorMsg = error.message || t('raas.messages.keepaRequestFailed')
+      toast.error(errorMsg)
     },
     onSettled: () => {
-      bsrLoading.value = false
+      keepaLoading.value = false
     },
   })
 }
 
-// ---- BSR: inline refresh on table row ----
-async function handleRefreshBsr(row: Product) {
-  if (!row.asin_list || row.asin_list.length === 0 || !row.category_name)
-    return
-
-  const toastId = toast.loading(t('raas.messages.refreshing'))
-
-  fetchBsr({
-    asin_list: row.asin_list,
-    category_name: row.category_name,
-  }, {
-    onSuccess: (res) => {
-      if (res.status === 'found' && res.baseline_sales_rank != null) {
-        row.baseline_sales_rank = res.baseline_sales_rank
-        updateProduct({
-          amazon_profile_name: row.amazon_profile_name,
-          hanna_org_name: row.hanna_org_name,
-          asin_list: row.asin_list,
-          category_name: row.category_name,
-          raas_plan: row.raas_plan,
-          start_date: row.start_date,
-          end_date: row.end_date,
-          baseline_sales_rank: res.baseline_sales_rank,
-          status: row.status,
-        }, {
-          onSuccess: () => {
-            toast.success(t('raas.messages.refreshSuccess'), { id: toastId })
-          },
-          onError: () => {
-            toast.error(t('raas.messages.refreshFailed'), { id: toastId })
-          },
-        })
-      }
-      else if (res.status === 'fetching_triggered') {
-        toast.info(t('raas.messages.fetchingTryLater'), { id: toastId })
-      }
-      else {
-        toast.error(t('raas.messages.dataNotFound'), { id: toastId })
-      }
-    },
-    onError: () => {
-      toast.error(t('raas.messages.refreshFailed'), { id: toastId })
-    },
-  })
+// Handle category selection - auto-fill baseline sales rank
+function handleCategoryChange(categoryValue: any) {
+  const valueStr = String(categoryValue ?? '')
+  formData.value.category_name = valueStr
+  const selectedCategory = keepaCategories.value.find(c => c.category_name === valueStr)
+  if (selectedCategory && selectedCategory.sales_rank != null) {
+    formData.value.baseline_sales_rank = selectedCategory.sales_rank
+  }
 }
 
 // ---- Submit form ----
 async function handleModalOk() {
-  const asinArr = parseAsinText(formData.value._asin_text)
   const payload: ProductCreate = {
     amazon_profile_name: formData.value.amazon_profile_name,
     hanna_org_name: formData.value.hanna_org_name,
-    asin_list: asinArr,
+    asin: formData.value.asin,
     category_name: formData.value.category_name,
     raas_plan: formData.value.raas_plan,
     start_date: formData.value.start_date,
     end_date: formData.value.end_date,
     baseline_sales_rank: formData.value.baseline_sales_rank,
+    // 前端输入的是百分比（如 25），后端存储的是小数（如 0.25），需要除以 100
+    target_acos: formData.value.target_acos != null ? formData.value.target_acos / 100 : null,
+    target_ad_spend: formData.value.target_ad_spend,
     marketplace: formData.value.marketplace,
     ...(isEditing.value ? { status: formData.value.status } : {}),
   }
@@ -491,6 +696,15 @@ const totalPages = computed(() => {
       <Button @click="handleAdd">
         {{ t('raas.actions.addProduct') }}
       </Button>
+      <!-- 新增：更新数据按钮 -->
+      <div class="flex items-center gap-2">
+        <Button :disabled="isUpdateDisabled" @click="handleUpdateData">
+          {{ updateButtonText }}
+        </Button>
+        <span class="text-xs text-muted-foreground whitespace-nowrap">
+          {{ t('raas.dashboard.lastUpdated', { time: displayLastUpdateTime }) }}
+        </span>
+      </div>
     </div>
 
     <!-- Two-panel table -->
@@ -536,8 +750,8 @@ const totalPages = computed(() => {
                 </td>
                 <td class="row-cell w-[48px] px-2">
                   <img
-                    v-if="row.progress?.img_url"
-                    :src="row.progress.img_url"
+                    v-if="row.product.img_url"
+                    :src="row.product.img_url"
                     alt="Product"
                     class="h-9 w-9 rounded object-cover"
                   >
@@ -596,9 +810,15 @@ const totalPages = computed(() => {
                 <th class="row-cell min-w-[80px] whitespace-nowrap px-3 text-left font-medium text-foreground">
                   {{ t('raas.table.daysTaken') }}
                 </th>
+                <th class="row-cell min-w-[100px] whitespace-nowrap px-3 text-left font-medium text-foreground">
+                  {{ t('raas.table.finalStatusDate') }}
+                </th>
                 <!-- Ad columns (window controlled by filter) -->
                 <th class="row-cell min-w-[100px] whitespace-nowrap px-3 text-left font-medium text-foreground">
                   {{ t('raas.table.adSpend') }}
+                </th>
+                <th class="row-cell min-w-[120px] whitespace-nowrap px-3 text-left font-medium text-foreground">
+                  {{ t('raas.table.targetAdSpend') }}
                 </th>
                 <th class="row-cell min-w-[100px] whitespace-nowrap px-3 text-left font-medium text-foreground">
                   {{ t('raas.table.adSales') }}
@@ -608,6 +828,9 @@ const totalPages = computed(() => {
                 </th>
                 <th class="row-cell min-w-[80px] whitespace-nowrap px-3 text-left font-medium text-foreground">
                   {{ t('raas.table.acos') }}
+                </th>
+                <th class="row-cell min-w-[100px] whitespace-nowrap px-3 text-left font-medium text-foreground">
+                  {{ t('raas.table.targetAcos') }}
                 </th>
                 <th class="row-cell min-w-[80px] whitespace-nowrap px-3 text-left font-medium text-foreground">
                   {{ t('raas.table.cmActions') }}
@@ -634,12 +857,12 @@ const totalPages = computed(() => {
             </thead>
             <tbody>
               <tr v-if="loading">
-                <td colspan="31" class="row-cell px-3 text-center text-muted-foreground">
+                <td colspan="32" class="row-cell px-3 text-center text-muted-foreground">
                   {{ t('raas.table.loading') }}
                 </td>
               </tr>
               <tr v-else-if="flattenedRows.length === 0">
-                <td colspan="31" class="row-cell px-3 text-center text-muted-foreground">
+                <td colspan="32" class="row-cell px-3 text-center text-muted-foreground">
                   {{ t('raas.table.noData') }}
                 </td>
               </tr>
@@ -666,15 +889,7 @@ const totalPages = computed(() => {
                   <span v-if="row.product.baseline_sales_rank != null">
                     {{ row.product.baseline_sales_rank }}
                   </span>
-                  <Button
-                    v-else
-                    size="sm"
-                    variant="outline"
-                    class="h-7 text-xs"
-                    @click="handleRefreshBsr(row.product)"
-                  >
-                    {{ t('raas.actions.refresh') }}
-                  </Button>
+                  <span v-else class="text-muted-foreground">-</span>
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
                   <Badge :variant="statusVariantMap[row.product.status || 'ONGOING'] || 'outline'">
@@ -689,50 +904,62 @@ const totalPages = computed(() => {
                 </td>
                 <!-- Progress data -->
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.days_remaining ?? '-' }}
+                  {{ row.product.days_remaining ?? '-' }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.current_sales_rank ?? '-' }}
+                  {{ row.product.current_sales_rank ?? '-' }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.climb_days_met ?? '-' }}
+                  {{ row.product.climb_days_met ?? '-' }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.days_taken ?? '-' }}
+                  {{ row.product.days_taken ?? '-' }}
+                </td>
+                <td class="row-cell whitespace-nowrap px-3">
+                  {{ row.product.final_status_date ?? '-' }}
                 </td>
                 <!-- Ad data (window controlled by filter) -->
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.ad_spend ?? '-' }}
+                  {{ formatCurrency(getAdData(row.product)?.ad_spend, row.product.marketplace) }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.ad_sales ?? '-' }}
+                  {{ formatCurrency(row.product.target_ad_spend, row.product.marketplace) }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.ad_orders ?? '-' }}
+                  {{ formatCurrency(getAdData(row.product)?.ad_sales, row.product.marketplace) }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.acos ?? '-' }}
+                  {{ getAdData(row.product)?.ad_orders ?? '-' }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.cyber_minigun_actions ?? '-' }}
+                  {{ formatPercent(getAdData(row.product)?.acos) }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.cyber_minigun_launch_groups ?? '-' }}
+                  <span v-if="row.product.target_acos != null">
+                    {{ formatPercent(row.product.target_acos) }}
+                  </span>
+                  <span v-else class="text-muted-foreground">-</span>
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.campaigns_created_by_cyber_minigun ?? '-' }}
+                  {{ row.product.cyber_minigun_actions ?? '-' }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.adgroups_created_by_cyber_minigun ?? '-' }}
+                  {{ row.product.cyber_minigun_launch_groups ?? '-' }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.smart_campaigns ?? '-' }}
+                  {{ row.product.campaigns_created_by_cyber_minigun ?? '-' }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.campaigns_created_by_smart_campaigns ?? '-' }}
+                  {{ row.product.adgroups_created_by_cyber_minigun ?? '-' }}
                 </td>
                 <td class="row-cell whitespace-nowrap px-3">
-                  {{ row.progress?.adgroups_created_by_smart_campaigns ?? '-' }}
+                  {{ row.product.smart_campaigns ?? '-' }}
+                </td>
+                <td class="row-cell whitespace-nowrap px-3">
+                  {{ row.product.campaigns_created_by_smart_campaigns ?? '-' }}
+                </td>
+                <td class="row-cell whitespace-nowrap px-3">
+                  {{ row.product.adgroups_created_by_smart_campaigns ?? '-' }}
                 </td>
               </tr>
             </tbody>
@@ -742,6 +969,7 @@ const totalPages = computed(() => {
     </div>
 
     <!-- Selection action bar -->
+    <!-- 移除了"确认更新"按钮 -->
     <div v-if="hasSelection" class="flex items-center gap-3 rounded-md border bg-muted/50 p-3">
       <span class="text-sm font-medium">
         {{ t('raas.actions.selectedProducts', { products: selectedProductCount, rows: selectedRowKeys.size }) }}
@@ -751,9 +979,6 @@ const totalPages = computed(() => {
       </Button>
       <Button size="sm" variant="destructive" @click="handleCancelSelected">
         {{ t('raas.actions.cancelContract') }}
-      </Button>
-      <Button size="sm" :disabled="trackingLoading" @click="handleConfirmTracking">
-        {{ trackingLoading ? t('raas.actions.updating') : t('raas.actions.updateTracking') }}
       </Button>
     </div>
 
@@ -795,12 +1020,6 @@ const totalPages = computed(() => {
           <div class="grid gap-4 px-2">
             <div class="space-y-2">
               <div class="text-sm text-muted-foreground">
-                {{ t('raas.modal.amazonProfile') }}
-              </div>
-              <Input v-model="formData.amazon_profile_name" :disabled="isEditing" :placeholder="t('raas.modal.amazonProfilePlaceholder')" class="w-full max-w-[calc(100%-2rem)]" />
-            </div>
-            <div class="space-y-2">
-              <div class="text-sm text-muted-foreground">
                 {{ t('raas.modal.marketplace') }}
               </div>
               <Select v-model="formData.marketplace" :disabled="isEditing">
@@ -818,42 +1037,192 @@ const totalPages = computed(() => {
               <div class="text-sm text-muted-foreground">
                 {{ t('raas.modal.hannaOrg') }}
               </div>
-              <Input v-model="formData.hanna_org_name" :disabled="isEditing" :placeholder="t('raas.modal.hannaOrgPlaceholder')" class="w-full max-w-[calc(100%-2rem)]" />
+              <div ref="hannaOrgDropdownRef" class="relative w-full max-w-[calc(100%-2rem)]">
+                <button
+                  type="button"
+                  :disabled="isEditing || hannaOrgsLoading"
+                  class="flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  @click="hannaOrgDropdownOpen = !hannaOrgDropdownOpen"
+                >
+                  <span class="truncate">
+                    {{ formData.hanna_org_name || (hannaOrgsLoading ? t('raas.modal.fetching') : t('raas.modal.hannaOrgPlaceholder')) }}
+                  </span>
+                  <ChevronDown :size="16" class="shrink-0 opacity-50" />
+                </button>
+                <!-- Dropdown list -->
+                <div
+                  v-if="hannaOrgDropdownOpen && !isEditing && !hannaOrgsLoading"
+                  class="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md"
+                >
+                  <!-- Search input -->
+                  <div class="border-b px-3 py-2">
+                    <input
+                      v-model="hannaOrgSearch"
+                      type="text"
+                      :placeholder="t('raas.filter.search')"
+                      class="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                    >
+                  </div>
+                  <!-- Options list -->
+                  <div class="max-h-60 overflow-y-auto p-1">
+                    <!-- Clear option -->
+                    <button
+                      v-if="formData.hanna_org_name"
+                      type="button"
+                      class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                      @click="formData.hanna_org_name = ''; hannaOrgDropdownOpen = false; hannaOrgSearch = ''"
+                    >
+                      <X :size="14" class="opacity-50" />
+                      {{ t('raas.filter.clear') }}
+                    </button>
+                    <!-- Filtered options -->
+                    <button
+                      v-for="org in filteredHannaOrgs"
+                      :key="org.hanna_org_name"
+                      type="button"
+                      class="relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                      @click="formData.hanna_org_name = org.hanna_org_name; hannaOrgDropdownOpen = false; hannaOrgSearch = ''"
+                    >
+                      {{ org.hanna_org_name }}
+                    </button>
+                    <div v-if="filteredHannaOrgs.length === 0" class="px-2 py-1.5 text-sm text-muted-foreground">
+                      {{ t('raas.filter.noResults') }}
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             <div class="space-y-2">
               <div class="text-sm text-muted-foreground">
-                {{ t('raas.modal.asinList') }}
+                {{ t('raas.modal.amazonProfile') }}
               </div>
-              <Textarea v-model="formData._asin_text" :disabled="isEditing" :placeholder="t('raas.modal.asinListPlaceholder')" class="w-full max-w-[calc(100%-2rem)]" />
+              <div ref="amazonProfileDropdownRef" class="relative w-full max-w-[calc(100%-2rem)]">
+                <button
+                  type="button"
+                  :disabled="isEditing || amazonProfilesLoading"
+                  class="flex h-9 w-full items-center justify-between rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm ring-offset-background placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  @click="amazonProfileDropdownOpen = !amazonProfileDropdownOpen"
+                >
+                  <span class="truncate">
+                    {{ formData.amazon_profile_name || (amazonProfilesLoading ? t('raas.modal.fetching') : t('raas.modal.amazonProfilePlaceholder')) }}
+                  </span>
+                  <ChevronDown :size="16" class="shrink-0 opacity-50" />
+                </button>
+                <!-- Dropdown list -->
+                <div
+                  v-if="amazonProfileDropdownOpen && !isEditing && !amazonProfilesLoading"
+                  class="absolute z-50 mt-1 w-full rounded-md border bg-popover shadow-md"
+                >
+                  <!-- Search input -->
+                  <div class="border-b px-3 py-2">
+                    <input
+                      v-model="amazonProfileSearch"
+                      type="text"
+                      :placeholder="t('raas.filter.search')"
+                      class="w-full bg-transparent text-sm outline-none placeholder:text-muted-foreground"
+                    >
+                  </div>
+                  <!-- Options list -->
+                  <div class="max-h-60 overflow-y-auto p-1">
+                    <!-- Clear option -->
+                    <button
+                      v-if="formData.amazon_profile_name"
+                      type="button"
+                      class="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                      @click="formData.amazon_profile_name = ''; amazonProfileDropdownOpen = false; amazonProfileSearch = ''"
+                    >
+                      <X :size="14" class="opacity-50" />
+                      {{ t('raas.filter.clear') }}
+                    </button>
+                    <!-- Filtered options -->
+                    <button
+                      v-for="profile in filteredAmazonProfiles"
+                      :key="`${profile.amazon_profile_name}||${profile.hanna_org_name}`"
+                      type="button"
+                      class="relative flex w-full cursor-pointer select-none items-center rounded-sm px-2 py-1.5 text-sm outline-none hover:bg-accent hover:text-accent-foreground data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                      @click="formData.amazon_profile_name = profile.amazon_profile_name; amazonProfileDropdownOpen = false; amazonProfileSearch = ''"
+                    >
+                      {{ profile.amazon_profile_name }}
+                    </button>
+                    <div v-if="filteredAmazonProfiles.length === 0" class="px-2 py-1.5 text-sm text-muted-foreground">
+                      {{ t('raas.filter.noResults') }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="space-y-2">
+              <div class="text-sm text-muted-foreground">
+                {{ t('raas.modal.asin') }}
+              </div>
+              <div class="flex gap-2 items-start">
+                <Input v-model="formData.asin" :disabled="isEditing" :placeholder="t('raas.modal.asinPlaceholder')" class="w-40" />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  :disabled="keepaLoading || isEditing || !formData.asin"
+                  @click="handleFetchKeepaData"
+                >
+                  {{ keepaLoading ? t('raas.modal.fetchingKeepa') : t('raas.modal.fetchKeepaData') }}
+                </Button>
+              </div>
             </div>
             <div class="space-y-2">
               <div class="text-sm text-muted-foreground">
                 {{ t('raas.modal.category') }}
               </div>
-              <Input v-model="formData.category_name" :disabled="isEditing" :placeholder="t('raas.modal.categoryPlaceholder')" class="w-full max-w-[calc(100%-2rem)]" />
+              <!-- Category: Dropdown after keepa fetch, or Input if editing/never fetched -->
+              <Select
+                v-if="keepaFetched && keepaCategories.length > 0"
+                :model-value="formData.category_name"
+                :disabled="isEditing || keepaLoading"
+                @update:model-value="handleCategoryChange"
+              >
+                <SelectTrigger class="w-full max-w-[calc(100%-2rem)]">
+                  <SelectValue :placeholder="t('raas.modal.categoryPlaceholder')" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem
+                    v-for="cat in keepaCategoriesWithRank"
+                    :key="cat.category_id"
+                    :value="cat.category_name"
+                  >
+                    {{ formatKeepaCategoryItem(cat) }}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <Input
+                v-else
+                v-model="formData.category_name"
+                :disabled="isEditing || keepaLoading"
+                :placeholder="t('raas.modal.categoryPlaceholder')"
+                class="w-full max-w-[calc(100%-2rem)]"
+              />
             </div>
             <div class="space-y-2">
-              <div class="text-sm text-muted-foreground">
-                {{ t('raas.modal.baselineRank') }}
+              <div class="flex items-center gap-1 text-sm text-muted-foreground">
+                <span>{{ t('raas.modal.baselineRank') }}</span>
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger as-child>
+                      <button class="inline-flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors">
+                        <Info :size="14" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="right" class="max-w-[320px] whitespace-normal">
+                      {{ t('raas.modal.baselineRankTooltip') }}
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               </div>
-              <div class="flex items-center gap-2">
-                <Input
-                  :model-value="formData.baseline_sales_rank ?? undefined"
-                  type="number"
-                  :disabled="bsrPending"
-                  :placeholder="t('raas.modal.baselineRankPlaceholder')"
-                  class="w-full max-w-[calc(100%-2rem)]"
-                  @update:model-value="(v: any) => formData.baseline_sales_rank = v === '' || v == null ? null : Number(v)"
-                />
-                <Button
-                  variant="outline"
-                  type="button"
-                  :disabled="bsrLoading || bsrPending || !formData._asin_text || !formData.category_name"
-                  @click="handleFetchBsr"
-                >
-                  {{ bsrLoading ? t('raas.modal.fetching') : (bsrPending ? t('raas.modal.fetchingBackground') : t('raas.modal.fetchRank')) }}
-                </Button>
-              </div>
+              <Input
+                :model-value="formData.baseline_sales_rank ?? undefined"
+                type="number"
+                :disabled="bsrPending || keepaLoading"
+                :placeholder="t('raas.modal.baselineRankPlaceholder')"
+                class="w-full max-w-[calc(100%-2rem)]"
+                @update:model-value="(v: any) => formData.baseline_sales_rank = v === '' || v == null ? null : Number(v)"
+              />
             </div>
             <div class="space-y-2">
               <div class="text-sm text-muted-foreground">
@@ -873,6 +1242,18 @@ const totalPages = computed(() => {
                   </SelectItem>
                 </SelectContent>
               </Select>
+            </div>
+            <div class="space-y-2">
+              <div class="text-sm text-muted-foreground">
+                {{ t('raas.modal.startDate') }}
+              </div>
+              <Input v-model="formData.start_date" :disabled="isEditing" placeholder="YYYY-MM-DD" class="w-full max-w-[calc(100%-2rem)]" />
+            </div>
+            <div class="space-y-2">
+              <div class="text-sm text-muted-foreground">
+                {{ t('raas.modal.endDate') }}
+              </div>
+              <Input v-model="formData.end_date" placeholder="YYYY-MM-DD" class="w-full max-w-[calc(100%-2rem)]" />
             </div>
             <div v-if="isEditing" class="space-y-2">
               <div class="text-sm text-muted-foreground">
@@ -895,15 +1276,40 @@ const totalPages = computed(() => {
             </div>
             <div class="space-y-2">
               <div class="text-sm text-muted-foreground">
-                {{ t('raas.modal.startDate') }}
+                {{ t('raas.modal.targetAcos') }}
               </div>
-              <Input v-model="formData.start_date" :disabled="isEditing" placeholder="YYYY-MM-DD" class="w-full max-w-[calc(100%-2rem)]" />
+              <div class="relative">
+                <Input
+                  :model-value="formData.target_acos ?? undefined"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  max="250"
+                  :placeholder="t('raas.modal.targetAcosPlaceholder')"
+                  class="w-full max-w-[calc(100%-2rem)] pr-8"
+                  @update:model-value="(v: any) => formData.target_acos = v === '' || v == null ? null : Number(v)"
+                />
+                <span class="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm">%</span>
+              </div>
             </div>
             <div class="space-y-2">
               <div class="text-sm text-muted-foreground">
-                {{ t('raas.modal.endDate') }}
+                {{ t('raas.modal.targetAdSpend') }}
               </div>
-              <Input v-model="formData.end_date" placeholder="YYYY-MM-DD" class="w-full max-w-[calc(100%-2rem)]" />
+              <div class="relative">
+                <span class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground text-sm z-10">
+                  {{ getCurrencySymbol(formData.marketplace) }}
+                </span>
+                <Input
+                  :model-value="formData.target_ad_spend ?? undefined"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  :placeholder="t('raas.modal.targetAdSpendPlaceholder')"
+                  class="w-full max-w-[calc(100%-2rem)] pl-7"
+                  @update:model-value="(v: any) => formData.target_ad_spend = v === '' || v == null ? null : Number(v)"
+                />
+              </div>
             </div>
           </div>
           <DialogFooter class="pt-4">

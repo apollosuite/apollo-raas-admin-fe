@@ -2,7 +2,7 @@
 import { computed, ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 
-import type { ProductFilter } from '@/services/types/raas.type'
+import type { ProductFilter, ProductProgress } from '@/services/types/raas.type'
 
 import { BasicPage } from '@/components/global-layout'
 import FilterForm from '@/components/raas/filter-form.vue'
@@ -19,9 +19,14 @@ import {
 const { t } = useI18n()
 
 const filters = ref<ProductFilter>({})
+const allProducts = ref<ProductProgress[]>([])
 
 function handleFilterChange(newFilters: ProductFilter) {
   filters.value = { ...newFilters }
+}
+
+function handleProductsLoaded(products: ProductProgress[]) {
+  allProducts.value = products
 }
 
 // 提取广告窗口选项，用于在表格标题旁边显示
@@ -29,12 +34,13 @@ const adWindowOptions = computed(() => [
   { label: t('raas.dashboard.last7Days'), value: '7d' },
   { label: t('raas.dashboard.last14Days'), value: '14d' },
   { label: t('raas.dashboard.last30Days'), value: '30d' },
+  { label: t('raas.dashboard.todaySoFar'), value: 'rt' },
 ])
 
 // 处理广告窗口变化
 function handleAdWindowChange(value: any) {
-  if (value && (value === '7d' || value === '14d' || value === '30d')) {
-    filters.value = { ...filters.value, ad_window: value as '7d' | '14d' | '30d' }
+  if (value && (value === '7d' || value === '14d' || value === '30d' || value === 'rt')) {
+    filters.value = { ...filters.value, ad_window: value as '7d' | '14d' | '30d' | 'rt' }
   }
   else {
     // Remove ad_window from filters if value is invalid
@@ -57,7 +63,7 @@ const currentAdWindow = computed(() => {
           <CardTitle>{{ t('raas.dashboard.filters') }}</CardTitle>
         </CardHeader>
         <CardContent>
-          <FilterForm @filter-change="handleFilterChange" />
+          <FilterForm :products="allProducts" @filter-change="handleFilterChange" />
         </CardContent>
       </Card>
 
@@ -83,7 +89,7 @@ const currentAdWindow = computed(() => {
           </div>
         </CardHeader>
         <CardContent>
-          <ProductTable :filters="filters" />
+          <ProductTable :filters="filters" @products-loaded="handleProductsLoaded" />
         </CardContent>
       </Card>
     </div>

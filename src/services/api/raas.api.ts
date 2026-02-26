@@ -1,21 +1,25 @@
+import type { AxiosError } from 'axios'
 import type { MaybeRefOrGetter } from 'vue'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
 import { toValue } from 'vue'
 
-import { useAxios } from '@/composables/use-axios'
+import { createAxiosInstance, useAxios } from '@/composables/use-axios'
 
 import type {
-  BsrFetchRequest,
-  BsrFetchResponse,
+  AmazonProfileListResponse,
+  DataUpdateResponse,
+  HannaOrgListResponse,
+  KeepaFetchRequest,
+  KeepaFetchResponse,
+  LastUpdateTimeResponse,
   Product,
   ProductCompositeKey,
   ProductCreate,
-  ProductFilter,
   ProductListParams,
   ProductListResponse,
+  ProductProgressListResponse,
   ProductUpdate,
-  ProgressResponse,
 } from '../types/raas.type'
 
 export function useRaasApi() {
@@ -34,26 +38,57 @@ export function useRaasApi() {
     })
   }
 
-  const useGetProgressTracking = (asinList: string[], adWindow: string = '30') => {
+  // 新增：获取产品进度列表（合并产品信息和进度数据）
+  // 注意：不传ad_window参数，一次性获取所有7d/14d/30d的广告数据
+  const useGetProductProgress = (params: MaybeRefOrGetter<ProductListParams>) => {
     return useQuery({
-      queryKey: ['progress', asinList, adWindow],
+      queryKey: ['productProgress', params],
       queryFn: async () => {
-        const response = await axiosInstance.post('/progress', { asin_list: asinList, ad_window: adWindow })
+        // 排除ad_window参数，一次性获取所有时间窗口的广告数据
+        const rawParams = toValue(params)
+        const { ad_window, ...restParams } = rawParams as any
+        const response = await axiosInstance.get<ProductProgressListResponse>('/product-progress', { params: restParams })
         return response.data
       },
-      enabled: asinList.length > 0,
-      staleTime: 1000 * 60 * 2, // 2 minutes
+      staleTime: 1000 * 60 * 5, // 5 minutes
     })
   }
 
-  const useGetProgressByFilter = (filters: ProductFilter) => {
+  // 新增：获取最后更新时间
+  const useGetLastUpdateTime = () => {
     return useQuery({
-      queryKey: ['progressByFilter', filters],
+      queryKey: ['lastUpdateTime'],
       queryFn: async () => {
-        const response = await axiosInstance.get('/progress/by-filter', { params: filters })
+        const response = await axiosInstance.get<LastUpdateTimeResponse>('/progress/last-update-time')
         return response.data
       },
-      staleTime: 1000 * 60 * 2, // 2 minutes
+      staleTime: 1000 * 60 * 1, // 1 minute
+    })
+  }
+
+  // 新增：获取 Hanna Org 列表（用于新增产品时的级联选择）
+  const useGetHannaOrgs = () => {
+    return useQuery({
+      queryKey: ['hannaOrgs'],
+      queryFn: async () => {
+        const response = await axiosInstance.get<HannaOrgListResponse>('/hanna-orgs')
+        return response.data
+      },
+      staleTime: 1000 * 60 * 10, // 10 minutes
+    })
+  }
+
+  // 新增：获取 Amazon Profile 列表（支持按 Hanna Org 筛选）
+  const useGetAmazonProfiles = (hannaOrgName?: MaybeRefOrGetter<string | undefined>) => {
+    return useQuery({
+      queryKey: ['amazonProfiles', hannaOrgName],
+      queryFn: async () => {
+        const org = toValue(hannaOrgName)
+        const params = org ? { hanna_org_name: org } : {}
+        const response = await axiosInstance.get<AmazonProfileListResponse>('/amazon-profiles', { params })
+        return response.data
+      },
+      staleTime: 1000 * 60 * 10, // 10 minutes
     })
   }
 
@@ -64,9 +99,15 @@ export function useRaasApi() {
         const response = await axiosInstance.post('/products', data)
         return response.data
       },
-      onSuccess: () => {
-        // Invalidate products query to refetch data
-        queryClient.invalidateQueries({ queryKey: ['products'] })
+      onSuccess: async () => {
+        // 先触发数据更新任务
+        await axiosInstance.post('/progress/update')
+        // 延迟一段时间让后端任务处理，然后刷新数据
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ['products'] })
+          queryClient.invalidateQueries({ queryKey: ['productProgress'] })
+          queryClient.invalidateQueries({ queryKey: ['lastUpdateTime'] })
+        }, 2000)
       },
     })
   }
@@ -77,9 +118,15 @@ export function useRaasApi() {
         const response = await axiosInstance.put('/products', data)
         return response.data
       },
-      onSuccess: () => {
-        // Invalidate products query to refetch data
-        queryClient.invalidateQueries({ queryKey: ['products'] })
+      onSuccess: async () => {
+        // 先触发数据更新任务
+        await axiosInstance.post('/progress/update')
+        // 延迟一段时间让后端任务处理，然后刷新数据
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ['products'] })
+          queryClient.invalidateQueries({ queryKey: ['productProgress'] })
+          queryClient.invalidateQueries({ queryKey: ['lastUpdateTime'] })
+        }, 2000)
       },
     })
   }
@@ -89,27 +136,85 @@ export function useRaasApi() {
       mutationFn: async (key: ProductCompositeKey) => {
         await axiosInstance.post('/products/cancel', key)
       },
+      onSuccess: async () => {
+        // 先触发数据更新任务
+        await axiosInstance.post('/progress/update')
+        // 延迟一段时间让后端任务处理，然后刷新数据
+        setTimeout(() => {
+          queryClient.invalidateQueries({ queryKey: ['products'] })
+          queryClient.invalidateQueries({ queryKey: ['productProgress'] })
+          queryClient.invalidateQueries({ queryKey: ['lastUpdateTime'] })
+        }, 2000)
+      },
+    })
+  }
+
+  // 新增：获取Keepa产品数据
+  const useFetchKeepaData = () => {
+    return useMutation({
+      mutationFn: async (data: KeepaFetchRequest) => {
+        try {
+          // Keepa API 响应时间较长，使用更长的超时时间（15秒）
+          const longTimeoutInstance = createAxiosInstance(30000)
+          const response = await longTimeoutInstance.post('/products/fetch-keepa-data', data)
+          return response.data as KeepaFetchResponse
+        }
+        catch (error) {
+          // 将错误信息包装成更详细的格式
+          const axiosError = error as AxiosError<any>
+
+          // 构造详细的错误信息
+          let errorMessage = '请求失败'
+
+          if (axiosError.code === 'ECONNABORTED' || axiosError.message.includes('timeout')) {
+            errorMessage = '请求超时，Keepa API 响应时间过长，请稍后重试'
+          }
+          else if (axiosError.response) {
+            // 服务器返回了错误响应
+            const status = axiosError.response.status
+            const data = axiosError.response.data as any
+
+            if (data?.detail) {
+              errorMessage = `错误 ${status}: ${data.detail}`
+            }
+            else if (data?.message) {
+              errorMessage = `错误 ${status}: ${data.message}`
+            }
+            else {
+              errorMessage = `请求失败，状态码: ${status}`
+            }
+          }
+          else if (axiosError.request) {
+            // 请求已发出但没有收到响应
+            errorMessage = '网络错误，请检查网络连接'
+          }
+          else {
+            // 其他错误
+            errorMessage = axiosError.message || '请求失败'
+          }
+
+          // 抛出包含详细信息的错误
+          const enhancedError = new Error(errorMessage) as any
+          enhancedError.originalError = axiosError
+          enhancedError.code = axiosError.code
+          enhancedError.status = axiosError.response?.status
+          throw enhancedError
+        }
+      },
+    })
+  }
+
+  // 新增：触发数据更新任务
+  const useTriggerDataUpdate = () => {
+    return useMutation({
+      mutationFn: async () => {
+        const response = await axiosInstance.post<DataUpdateResponse>('/progress/update')
+        return response.data
+      },
       onSuccess: () => {
-        // Invalidate products query to refetch data
-        queryClient.invalidateQueries({ queryKey: ['products'] })
-      },
-    })
-  }
-
-  const useFetchBsr = () => {
-    return useMutation({
-      mutationFn: async (data: BsrFetchRequest) => {
-        const response = await axiosInstance.post('/products/fetch-bsr', data)
-        return response.data
-      },
-    })
-  }
-
-  const useUpdateProgressTracking = () => {
-    return useMutation({
-      mutationFn: async (data: { asin_list: string[], ad_window: string }) => {
-        const response = await axiosInstance.post('/progress', data)
-        return response.data
+        // 刷新最后更新时间和产品进度数据
+        queryClient.invalidateQueries({ queryKey: ['lastUpdateTime'] })
+        queryClient.invalidateQueries({ queryKey: ['productProgress'] })
       },
     })
   }
@@ -136,44 +241,49 @@ export function useRaasApi() {
     await axiosInstance.post('/products/cancel', key)
   }
 
-  const fetchBsr = async (data: BsrFetchRequest): Promise<BsrFetchResponse> => {
-    const response = await axiosInstance.post('/products/fetch-bsr', data)
+  // 新增：获取产品进度列表（合并产品信息和进度数据）
+  // 注意：不传ad_window参数，一次性获取所有7d/14d/30d的广告数据
+  const getProductProgress = async (
+    params: ProductListParams = {},
+  ): Promise<ProductProgressListResponse> => {
+    // 排除ad_window参数，一次性获取所有时间窗口的广告数据
+    const { ad_window, ...restParams } = params as any
+    const response = await axiosInstance.get('/product-progress', { params: restParams })
     return response.data
   }
 
-  const getProgressTracking = async (
-    asinList: string[],
-    adWindow: string = '30',
-  ): Promise<ProgressResponse> => {
-    const response = await axiosInstance.post('/progress', { asin_list: asinList, ad_window: adWindow })
+  // 新增：获取最后更新时间
+  const getLastUpdateTime = async (): Promise<LastUpdateTimeResponse> => {
+    const response = await axiosInstance.get<LastUpdateTimeResponse>('/progress/last-update-time')
     return response.data
   }
 
-  const getProgressByFilter = async (
-    filters: ProductFilter,
-  ): Promise<ProgressResponse> => {
-    const response = await axiosInstance.get('/progress/by-filter', { params: filters })
+  // 新增：触发数据更新任务
+  const triggerDataUpdate = async (): Promise<DataUpdateResponse> => {
+    const response = await axiosInstance.post<DataUpdateResponse>('/progress/update')
     return response.data
   }
 
   return {
-    // New Vue Query hooks
+    // Vue Query hooks
     useGetProducts,
-    useGetProgressTracking,
-    useGetProgressByFilter,
+    useGetProductProgress,
+    useGetLastUpdateTime,
+    useGetHannaOrgs,
+    useGetAmazonProfiles,
     useCreateProduct,
     useUpdateProduct,
     useCancelProduct,
-    useFetchBsr,
-    useUpdateProgressTracking,
+    useFetchKeepaData,
+    useTriggerDataUpdate,
 
     // Legacy methods for compatibility
     cancelProduct,
     createProduct,
-    fetchBsr,
     getProducts,
-    getProgressByFilter,
-    getProgressTracking,
+    getProductProgress,
     updateProduct,
+    getLastUpdateTime,
+    triggerDataUpdate,
   }
 }

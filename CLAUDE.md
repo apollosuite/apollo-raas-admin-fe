@@ -28,6 +28,11 @@ pnpm lint:fix     # Run ESLint with auto-fix
 - Uses `pnpm@10.28.2` as the package manager
 - Use `pnpm` for all package operations
 
+### Git Hooks
+
+Pre-commit hooks are configured via `simple-git-hooks`:
+- Runs `eslint --fix` on all files via lint-staged before committing
+
 ## Architecture
 
 ### Auto-Import System
@@ -38,7 +43,7 @@ This project heavily uses `unplugin-auto-import` and `unplugin-vue-components`:
 2. **Auto-imported composables**: All files in `src/composables/**/*.ts` are auto-imported
 3. **Auto-imported stores**: All files in `src/stores/**/*.ts` are auto-imported
 4. **Auto-imported constants**: All files in `src/constants/**/*.ts` are auto-imported
-5. **Auto-imported components**: All files in `src/components/**/*.vue` are available with directory-based namespace
+5. **Auto-imported components**: All files in `src/components/**/*.vue` are available with directory-based namespace (e.g., `UiButton` from `src/components/ui/button.vue`)
 
 Do not add manual imports for these - they are handled by the build system. Check `src/types/auto-import.d.ts` and `src/types/auto-import-components.d.ts` for available auto-imports.
 
@@ -51,11 +56,18 @@ Routes are auto-generated from `src/pages/` using `unplugin-vue-router`:
 - Layouts are in `src/layouts/` and applied automatically based on route configuration
 - Route guards are in `src/router/guard/` - currently implements auth guard that redirects unauthenticated users to `/auth/sign-in`
 
+**Route Generation Exclusions**: The following directories are excluded from route generation: `components/`, `layouts/`, `data/`, `types/`
+
 Route meta interface is extended in `src/types/vue-router-meta.d.ts`:
 
 ```typescript
 auth?: boolean  // If true, requires user login
 ```
+
+**Layout Override Pattern**: For directories (like `auth/` or `errors/`) that shouldn't use the default layout:
+1. Create a file at the parent level with the same name as the directory (e.g., `src/pages/auth.vue`)
+2. Use `<router-view />` as the template and set `layout: false` in the route meta
+3. This creates a redundant route (e.g., `/auth/`) which can be handled with an `index.vue` redirect if needed
 
 ### Plugin System
 
@@ -76,14 +88,44 @@ Pinia stores in `src/stores/` use the composition API style and are persisted wi
 - `auth.ts`: Manages authentication state (`isLogin`, `token`, `username`)
 - `theme.ts`: Manages theme preferences (`theme`, `radius`, `contentLayout`)
 
-### Data Fetching
+### Data Fetching (API Services)
 
-TanStack Vue Query is configured with a 5-minute stale time. Create axios instances using the `useAxios()` composable which:
+The API layer follows a specific pattern using TanStack Vue Query and axios:
 
-- Configures base URL from `VITE_SERVER_API_URL` + `VITE_SERVER_API_PREFIX`
-- Sets timeout from `VITE_SERVER_API_TIMEOUT`
-- Adds Bearer token from auth store to requests
-- Handles 401 responses by clearing auth and redirecting to sign-in
+1. **useAxios composable** (`src/composables/use-axios.ts`):
+   - Creates axios instances with base URL from `VITE_SERVER_API_URL` + `VITE_SERVER_API_PREFIX`
+   - Sets timeout from `VITE_SERVER_API_TIMEOUT`
+   - Adds Bearer token from auth store to requests via interceptor
+   - Handles 401 responses by clearing auth and redirecting to `/auth/sign-in`
+
+2. **API Composables** (e.g., `src/services/api/raas.api.ts`):
+   - Export a composable function (e.g., `useRaasApi()`) that wraps `useAxios()`
+   - Provide Vue Query hooks: `useQuery` for fetching, `useMutation` for mutations
+   - Include query keys and invalidation logic
+   - May also provide legacy methods for backward compatibility
+
+Example pattern:
+```typescript
+export function useRaasApi() {
+  const { axiosInstance } = useAxios()
+  const queryClient = useQueryClient()
+
+  const useGetProducts = (params: MaybeRefOrGetter<ProductListParams>) => {
+    return useQuery({
+      queryKey: ['products', params],
+      queryFn: async () => {
+        const response = await axiosInstance.get('/products', { params: toValue(params) })
+        return response.data
+      },
+      staleTime: 1000 * 60 * 5, // 5 minutes
+    })
+  }
+
+  return { useGetProducts, ... }
+}
+```
+
+3. **Type Definitions**: API types are defined in `src/services/types/` corresponding to each API module
 
 ### Internationalization (i18n)
 
@@ -100,13 +142,13 @@ Use the `$t()` function in templates for translations.
 
 ```
 src/components/
-├── ui/                    # Shadcn-vue UI components (auto-imported)
+├── ui/                    # Shadcn-vue UI components (auto-imported, ignored by ESLint)
 ├── app-sidebar/           # Sidebar navigation components
 ├── data-table/            # Reusable data table with filtering/pagination
 ├── global-layout/         # Layout components (BasicPage, TwoCol, etc.)
 ├── command-menu-panel/    # Command palette components
 ├── custom-theme/          # Theme customization components
-└── ...
+└── raas/                  # RaaS-specific components (filter-form, product-table, etc.)
 ```
 
 UI components from `src/components/ui/` are ignored by ESLint and automatically available.
@@ -118,9 +160,16 @@ src/pages/
 ├── [...path].vue          # Catch-all 404 route
 ├── auth/                  # Authentication pages (sign-in)
 ├── errors/                # Error pages (401, 403, 404, 500, 503)
-├── settings/             # Settings pages with sub-sections
-├── raas/                 # RaaS dashboard pages
-└── index.vue             # Home page
+├── settings/              # Settings pages with sub-sections
+├── raas/                  # RaaS dashboard pages
+└── index.vue              # Home page
+```
+
+### Path Alias
+
+The `@` alias is configured to map to the `src/` directory. Use it for imports like:
+```typescript
+import { useAuthStore } from '@/stores/auth'
 ```
 
 ### Environment Configuration

@@ -17,6 +17,7 @@ declare global {
   const THEME_PRIMARY_COLORS: typeof import('../constants/themes').THEME_PRIMARY_COLORS
   const computed: typeof import('vue').computed
   const createApp: typeof import('vue').createApp
+  const createAxiosInstance: typeof import('../composables/use-axios').createAxiosInstance
   const customRef: typeof import('vue').customRef
   const defineAsyncComponent: typeof import('vue').defineAsyncComponent
   const defineComponent: typeof import('vue').defineComponent

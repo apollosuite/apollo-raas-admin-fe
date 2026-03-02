@@ -318,5 +318,15 @@
   "raas.table.cmAdGroups": "赛博加特林创建的广告组数量",
   "raas.table.smartCampaigns": "智能广告活动计划数量",
   "raas.table.scCampaigns": "智能广告活动创建的广告系列数量",
-  "raas.table.scAdGroups": "智能广告活动创建的广告组数量"
+  "raas.table.scAdGroups": "智能广告活动创建的广告组数量",
+  "raas.table.actions": "操作",
+  "raas.table.viewAction": "查看操作",
+  "raas.table.keywordAnalytics": "关键词分析",
+  "raas.keywordAnalytics.title": "关键词分析",
+  "raas.keywordAnalytics.date": "日期",
+  "raas.keywordAnalytics.keyword": "关键词",
+  "raas.keywordAnalytics.abaRank": "ABA排名",
+  "raas.keywordAnalytics.organicRank": "自然排名",
+  "raas.keywordAnalytics.spAdRank": "SP广告排名",
+  "raas.keywordAnalytics.noData": "暂无关键词数据"
 }

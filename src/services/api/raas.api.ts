@@ -2,7 +2,7 @@ import type { AxiosError } from 'axios'
 import type { MaybeRefOrGetter } from 'vue'
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/vue-query'
-import { toValue } from 'vue'
+import { computed, toValue } from 'vue'
 
 import { createAxiosInstance, useAxios } from '@/composables/use-axios'
 
@@ -12,6 +12,8 @@ import type {
   HannaOrgListResponse,
   KeepaFetchRequest,
   KeepaFetchResponse,
+  KeywordAnalyticsListResponse,
+  KeywordAnalyticsParams,
   LastUpdateTimeResponse,
   Product,
   ProductCompositeKey,
@@ -219,6 +221,23 @@ export function useRaasApi() {
     })
   }
 
+  // 新增：获取关键词分析数据
+  const useGetKeywordAnalytics = (params: MaybeRefOrGetter<KeywordAnalyticsParams>) => {
+    return useQuery({
+      queryKey: ['keywordAnalytics', params],
+      queryFn: async () => {
+        const response = await axiosInstance.get<KeywordAnalyticsListResponse>('/keyword-analytics', { params: toValue(params) })
+        return response.data
+      },
+      staleTime: 1000 * 60 * 5, // 5 minutes
+      enabled: computed(() => {
+        // 只有当asin参数有值时才发起请求
+        const p = toValue(params)
+        return !!p.asin
+      }),
+    })
+  }
+
   // Legacy methods for compatibility
   const getProducts = async (
     params: ProductListParams = {},
@@ -271,6 +290,7 @@ export function useRaasApi() {
     useGetLastUpdateTime,
     useGetHannaOrgs,
     useGetAmazonProfiles,
+    useGetKeywordAnalytics,
     useCreateProduct,
     useUpdateProduct,
     useCancelProduct,

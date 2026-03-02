@@ -33,6 +33,8 @@ tags:
     description: 产品进度追踪（合并产品信息和进度数据）
   - name: Data Update
     description: 数据更新相关接口
+  - name: Keyword Analytics
+    description: 关键词分析相关接口
 
 paths:
   /products:
@@ -515,6 +517,47 @@ paths:
                   - amazon_profile_name: Profile A2
                     hanna_org_name: Hanna Org A
                 total: 2
+        '500':
+          $ref: '#/components/responses/InternalServerError'
+
+  /keyword-analytics:
+    get:
+      tags:
+        - Keyword Analytics
+      summary: 获取关键词分析数据
+      description: |
+        根据产品 ASIN 获取关键词分析数据。
+
+        ## 使用场景
+        - 用户点击表格中的"View Action" -> "Keyword Analytics"时调用
+        - 显示该产品的关键词排名数据（ABA Rank、Organic Rank、SP Ad Rank）
+      parameters:
+        - name: asin
+          in: query
+          required: true
+          description: 产品 ASIN
+          schema:
+            type: string
+      responses:
+        '200':
+          description: 获取成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/KeywordAnalyticsListResponse'
+              example:
+                items:
+                  - keyword: wireless mouse
+                    aba_rank: 15
+                    organic_rank: 23
+                    sp_ad_rank: 5
+                  - keyword: bluetooth mouse
+                    aba_rank: null
+                    organic_rank: 45
+                    sp_ad_rank: 12
+                total: 2
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '500':
           $ref: '#/components/responses/InternalServerError'
 
@@ -1027,6 +1070,38 @@ components:
           items:
             $ref: '#/components/schemas/AmazonProfile'
           description: Amazon Profile 列表
+        total:
+          type: integer
+          description: 总数量
+
+    KeywordAnalytics:
+      type: object
+      description: 单个关键词的分析数据
+      properties:
+        keyword:
+          type: string
+          description: 关键词
+        aba_rank:
+          type: integer
+          nullable: true
+          description: ABA 排名（Amazon Brand Analytics）
+        organic_rank:
+          type: integer
+          nullable: true
+          description: 自然搜索排名
+        sp_ad_rank:
+          type: integer
+          nullable: true
+          description: SP 广告排名（Sponsored Products Ad Rank）
+
+    KeywordAnalyticsListResponse:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/KeywordAnalytics'
+          description: 关键词分析数据列表
         total:
           type: integer
           description: 总数量

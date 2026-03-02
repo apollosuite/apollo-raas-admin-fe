@@ -290,5 +290,15 @@
   "raas.table.cmAdGroups": "Cyber Minigun Created AdGroups",
   "raas.table.smartCampaigns": "Smart Campaigns",
   "raas.table.scCampaigns": "Smart Campaigns Created Campaigns",
-  "raas.table.scAdGroups": "Smart Campaigns Created AdGroups"
+  "raas.table.scAdGroups": "Smart Campaigns Created AdGroups",
+  "raas.table.actions": "Actions",
+  "raas.table.viewAction": "View Action",
+  "raas.table.keywordAnalytics": "Keyword Analytics",
+  "raas.keywordAnalytics.title": "Keyword Analytics",
+  "raas.keywordAnalytics.date": "Date",
+  "raas.keywordAnalytics.keyword": "Keyword",
+  "raas.keywordAnalytics.abaRank": "ABA Rank",
+  "raas.keywordAnalytics.organicRank": "Organic Rank",
+  "raas.keywordAnalytics.spAdRank": "SP Ad Rank",
+  "raas.keywordAnalytics.noData": "No keyword data available"
 }

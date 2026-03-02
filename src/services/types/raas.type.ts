@@ -203,3 +203,21 @@ export interface AmazonProfileListResponse {
   items: AmazonProfile[]
   total: number
 }
+
+// 新增：关键词分析相关类型
+export interface KeywordAnalytics {
+  keyword: string
+  aba_rank: number | null
+  organic_rank: number | null
+  sp_ad_rank: number | null
+  date: string
+}
+
+export interface KeywordAnalyticsListResponse {
+  items: KeywordAnalytics[]
+  total: number
+}
+
+export interface KeywordAnalyticsParams {
+  asin: string
+}

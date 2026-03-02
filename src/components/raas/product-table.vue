@@ -1,11 +1,15 @@
 <script setup lang="ts">
+import type { ColumnDef } from '@tanstack/vue-table'
+
 import { onClickOutside } from '@vueuse/core'
-import { ChevronDown, Info, X } from 'lucide-vue-next'
+import { ChevronDown, Info, MoreVertical, X } from 'lucide-vue-next'
 import { computed, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { toast } from 'vue-sonner'
 
 import type {
+  KeywordAnalytics,
+  KeywordAnalyticsParams,
   Product,
   ProductCompositeKey,
   ProductCreate,
@@ -14,6 +18,8 @@ import type {
   ProductProgress,
 } from '@/services/types/raas.type'
 
+import DataTable from '@/components/data-table/data-table.vue'
+import { generateVueTable } from '@/components/data-table/use-generate-vue-table'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -24,6 +30,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -60,6 +72,7 @@ const {
   useTriggerDataUpdate,
   useGetHannaOrgs,
   useGetAmazonProfiles,
+  useGetKeywordAnalytics,
 } = useRaasApi()
 
 // Pagination
@@ -99,6 +112,10 @@ const { data: productProgressData, isLoading: loading } = useGetProductProgress(
 // 新增：获取最后更新时间
 const { data: lastUpdateTimeData, refetch: refetchLastUpdateTime } = useGetLastUpdateTime()
 
+// 新增：关键词分析弹窗状态
+const keywordAnalyticsDialogOpen = ref(false)
+const selectedProductForKeywords = ref<ProductProgress | null>(null)
+
 // Update total when data changes
 watch(
   () => productProgressData.value?.total,
@@ -128,6 +145,60 @@ const { mutate: fetchKeepaData } = useFetchKeepaData()
 const { mutate: triggerDataUpdate, isPending: isUpdating } = useTriggerDataUpdate()
 
 const tableData = computed(() => productProgressData.value?.items || [])
+
+// 新增：关键词分析查询参数（基于选中的产品）
+const keywordAnalyticsParams = computed<KeywordAnalyticsParams>(() => {
+  if (!selectedProductForKeywords.value)
+    return { asin: '' }
+  return {
+    asin: selectedProductForKeywords.value.asin || '',
+  }
+})
+
+const { data: keywordAnalyticsData, isLoading: keywordAnalyticsLoading } = useGetKeywordAnalytics(keywordAnalyticsParams)
+
+// 关键词分析表格列定义
+const keywordAnalyticsColumns = computed<ColumnDef<KeywordAnalytics>[]>(() => [
+  {
+    accessorKey: 'date',
+    header: () => t('raas.keywordAnalytics.date'),
+    cell: ({ row }) => row.original.date ?? '-',
+    size: 100,
+  },
+  {
+    accessorKey: 'keyword',
+    header: () => t('raas.keywordAnalytics.keyword'),
+    cell: ({ row }) => row.original.keyword,
+    size: 300,
+  },
+  {
+    accessorKey: 'aba_rank',
+    header: () => t('raas.keywordAnalytics.abaRank'),
+    cell: ({ row }) => row.original.aba_rank ?? '-',
+    size: 100,
+  },
+  {
+    accessorKey: 'organic_rank',
+    header: () => t('raas.keywordAnalytics.organicRank'),
+    cell: ({ row }) => row.original.organic_rank ?? '-',
+    size: 120,
+  },
+  {
+    accessorKey: 'sp_ad_rank',
+    header: () => t('raas.keywordAnalytics.spAdRank'),
+    cell: ({ row }) => row.original.sp_ad_rank ?? '-',
+    size: 120,
+  },
+])
+
+// 关键词分析表格数据
+const keywordAnalyticsTableData = computed(() => keywordAnalyticsData.value?.items || [])
+
+// 生成关键词分析表格
+const keywordAnalyticsTable = computed(() => generateVueTable<KeywordAnalytics>({
+  columns: keywordAnalyticsColumns.value,
+  data: keywordAnalyticsTableData.value,
+}))
 
 // 获取当前选择的广告窗口
 const currentAdWindow = computed(() => props.filters.ad_window || '30d')
@@ -590,6 +661,12 @@ function handleEdit(row: ProductProgress) {
   modalOpen.value = true
 }
 
+// 新增：打开关键词分析弹窗
+function handleOpenKeywordAnalytics(row: ProductProgress) {
+  selectedProductForKeywords.value = row
+  keywordAnalyticsDialogOpen.value = true
+}
+
 // ---- Keepa: Fetch product categories and sales ranks ----
 async function handleFetchKeepaData() {
   if (!formData.value.asin) {
@@ -965,6 +1042,47 @@ const totalPages = computed(() => {
             </tbody>
           </table>
         </div>
+
+        <!-- Fixed right panel: Actions -->
+        <div class="shrink-0 border-l bg-background">
+          <table class="text-sm">
+            <thead>
+              <tr class="border-b">
+                <th class="row-cell w-[100px] px-2 text-left font-medium text-foreground">
+                  {{ t('raas.table.actions') }}
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-if="loading">
+                <td class="row-cell px-2 text-center text-muted-foreground">
+                  {{ t('raas.table.loading') }}
+                </td>
+              </tr>
+              <tr v-else-if="flattenedRows.length === 0">
+                <td class="row-cell px-2 text-center text-muted-foreground">
+                  {{ t('raas.table.noData') }}
+                </td>
+              </tr>
+              <tr v-for="row in flattenedRows" :key="`${row._key}_actions`" class="border-b">
+                <td class="row-cell px-2">
+                  <DropdownMenu>
+                    <DropdownMenuTrigger as-child>
+                      <Button variant="ghost" size="sm" class="h-8 px-2" :title="t('raas.table.viewAction')">
+                        <MoreVertical :size="16" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem @click="handleOpenKeywordAnalytics(row.product)">
+                        {{ t('raas.table.keywordAnalytics') }}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -1009,6 +1127,39 @@ const totalPages = computed(() => {
         </Button>
       </div>
     </div>
+
+    <!-- Keyword Analytics Dialog -->
+    <Dialog :open="keywordAnalyticsDialogOpen" @update:open="keywordAnalyticsDialogOpen = $event">
+      <DialogContent class="sm:max-w-[900px] w-full max-h-[80vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>{{ t('raas.keywordAnalytics.title') }} - {{ selectedProductForKeywords?.asin }}</DialogTitle>
+        </DialogHeader>
+        <div class="flex-1 overflow-auto">
+          <div v-if="keywordAnalyticsLoading" class="flex items-center justify-center py-8">
+            <div class="text-muted-foreground">
+              {{ t('raas.table.loading') }}
+            </div>
+          </div>
+          <div v-else-if="!keywordAnalyticsData?.items || keywordAnalyticsData.items.length === 0" class="flex items-center justify-center py-8">
+            <div class="text-muted-foreground">
+              {{ t('raas.keywordAnalytics.noData') }}
+            </div>
+          </div>
+          <DataTable
+            v-else
+            :table="keywordAnalyticsTable"
+            :columns="keywordAnalyticsColumns"
+            :data="keywordAnalyticsTableData"
+            :loading="false"
+          />
+        </div>
+        <DialogFooter class="pt-4">
+          <Button variant="secondary" @click="keywordAnalyticsDialogOpen = false">
+            {{ t('raas.modal.cancel') }}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
 
     <!-- Add/Edit Dialog -->
     <Dialog :open="modalOpen" @update:open="modalOpen = $event">

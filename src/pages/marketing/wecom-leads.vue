@@ -605,59 +605,59 @@ onBeforeUnmount(stopColumnResize)
                     />
                   </th>
                   <th class="sticky-table-head sticky-left-cell z-30" :style="pinnedLeftStyle('contact')">
-                    <div class="truncate px-2 text-center">
+                    <div class="truncate px-2 text-left">
                       Contact
                     </div>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, 'contact')" />
                   </th>
                   <th class="sticky-table-head" :style="columnStyle('salesperson')">
-                    <div class="truncate px-2 text-center">
+                    <div class="truncate px-2 text-left">
                       Salesperson
                     </div>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, 'salesperson')" />
                   </th>
                   <th class="sticky-table-head" :style="columnStyle('chatType')">
-                    <div class="truncate px-2 text-center">
+                    <div class="truncate px-2 text-left">
                       Chat Type
                     </div>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, 'chatType')" />
                   </th>
                   <th class="sticky-table-head" :style="columnStyle('apolloMessages')">
-                    <button class="inline-flex w-full items-center justify-center gap-1 truncate px-2" type="button" @click="toggleSort('apollo_messages')">
+                    <button class="inline-flex w-full items-center justify-start gap-1 truncate px-2" type="button" @click="toggleSort('apollo_messages')">
                       Apollo Msgs
                       <component :is="sortIcon('apollo_messages')" class="size-3.5 shrink-0" />
                     </button>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, 'apolloMessages')" />
                   </th>
                   <th class="sticky-table-head" :style="columnStyle('replies')">
-                    <button class="inline-flex w-full items-center justify-center gap-1 truncate px-2" type="button" @click="toggleSort('replies')">
+                    <button class="inline-flex w-full items-center justify-start gap-1 truncate px-2" type="button" @click="toggleSort('replies')">
                       Replies
                       <component :is="sortIcon('replies')" class="size-3.5 shrink-0" />
                     </button>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, 'replies')" />
                   </th>
                   <th class="sticky-table-head" :style="columnStyle('lastMessaged')">
-                    <button class="inline-flex w-full items-center justify-center gap-1 truncate px-2" type="button" @click="toggleSort('last_messaged')">
+                    <button class="inline-flex w-full items-center justify-start gap-1 truncate px-2" type="button" @click="toggleSort('last_messaged')">
                       Last Messaged
                       <component :is="sortIcon('last_messaged')" class="size-3.5 shrink-0" />
                     </button>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, 'lastMessaged')" />
                   </th>
                   <th v-for="rule in salesTagRules" :key="rule.id" class="sticky-table-head" :style="columnStyle(`tag:${rule.id}`)">
-                    <div class="truncate px-2 text-center" :title="rule.tag_name">
+                    <div class="truncate px-2 text-left" :title="rule.tag_name">
                       {{ rule.tag_name }}
                     </div>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, `tag:${rule.id}`)" />
                   </th>
                   <th class="sticky-table-head" :style="columnStyle('qualityScore')">
-                    <button class="inline-flex w-full items-center justify-center gap-1 truncate px-2" type="button" @click="toggleSort('score')">
+                    <button class="inline-flex w-full items-center justify-start gap-1 truncate px-2" type="button" @click="toggleSort('score')">
                       Score
                       <component :is="sortIcon('score')" class="size-3.5 shrink-0" />
                     </button>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, 'qualityScore')" />
                   </th>
                   <th class="sticky-table-head sticky-right-cell z-30" :style="pinnedRightStyle('conversation')">
-                    <div class="truncate px-2 text-center">
+                    <div class="truncate px-2 text-left">
                       Conversation
                     </div>
                     <button class="column-resize-handle" type="button" @mousedown="startColumnResize($event, 'conversation')" />

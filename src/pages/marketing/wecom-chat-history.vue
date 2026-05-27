@@ -347,22 +347,22 @@ function jumpGroupPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead class="min-w-[240px] text-center">
+                    <TableHead class="min-w-[240px]">
                       Thread
                     </TableHead>
-                    <TableHead class="min-w-[180px] text-center">
+                    <TableHead class="min-w-[180px]">
                       Apollo Staff
                     </TableHead>
-                    <TableHead class="min-w-[90px] text-center">
+                    <TableHead class="min-w-[90px]">
                       Messages
                     </TableHead>
-                    <TableHead class="min-w-[120px] text-center">
+                    <TableHead class="min-w-[120px]">
                       Latest Type
                     </TableHead>
-                    <TableHead class="min-w-[280px] text-center">
+                    <TableHead class="min-w-[280px]">
                       Latest Preview
                     </TableHead>
-                    <TableHead class="min-w-[180px] text-center">
+                    <TableHead class="min-w-[180px]">
                       Latest Time
                     </TableHead>
                   </TableRow>
@@ -551,25 +551,25 @@ function jumpGroupPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead class="min-w-[260px] text-center">
+                    <TableHead class="min-w-[260px]">
                       Group
                     </TableHead>
-                    <TableHead class="min-w-[140px] text-center">
+                    <TableHead class="min-w-[140px]">
                       Owner
                     </TableHead>
-                    <TableHead class="min-w-[100px] text-center">
+                    <TableHead class="min-w-[100px]">
                       Members
                     </TableHead>
-                    <TableHead class="min-w-[100px] text-center">
+                    <TableHead class="min-w-[100px]">
                       Messages
                     </TableHead>
-                    <TableHead class="min-w-[120px] text-center">
+                    <TableHead class="min-w-[120px]">
                       Latest Type
                     </TableHead>
-                    <TableHead class="min-w-[280px] text-center">
+                    <TableHead class="min-w-[280px]">
                       Latest Preview
                     </TableHead>
-                    <TableHead class="min-w-[180px] text-center">
+                    <TableHead class="min-w-[180px]">
                       Latest Time
                     </TableHead>
                   </TableRow>

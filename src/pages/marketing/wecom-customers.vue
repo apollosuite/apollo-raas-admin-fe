@@ -441,25 +441,25 @@ function relationTags(tags: unknown) {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead class="min-w-[220px] text-center">
+                    <TableHead class="min-w-[220px]">
                       Identity
                     </TableHead>
-                    <TableHead class="min-w-[180px] text-center">
+                    <TableHead class="min-w-[180px]">
                       Company
                     </TableHead>
-                    <TableHead class="min-w-[130px] text-center">
+                    <TableHead class="min-w-[130px]">
                       Gender / Type
                     </TableHead>
-                    <TableHead class="min-w-[110px] text-center">
+                    <TableHead class="min-w-[110px]">
                       Followers
                     </TableHead>
-                    <TableHead class="min-w-[180px] text-center">
+                    <TableHead class="min-w-[180px]">
                       Owners
                     </TableHead>
-                    <TableHead class="min-w-[220px] text-center">
+                    <TableHead class="min-w-[220px]">
                       Tags
                     </TableHead>
-                    <TableHead class="min-w-[180px] text-center">
+                    <TableHead class="min-w-[180px]">
                       Updated
                     </TableHead>
                     <TableHead class="w-[80px]" />
@@ -688,16 +688,16 @@ function relationTags(tags: unknown) {
               <Table>
                 <TableHeader>
                   <TableRow>
-                    <TableHead class="min-w-[240px] text-center">
+                    <TableHead class="min-w-[240px]">
                       Apollo Staff
                     </TableHead>
-                    <TableHead class="min-w-[180px] text-center">
+                    <TableHead class="min-w-[180px]">
                       Added Date
                     </TableHead>
-                    <TableHead class="min-w-[180px] text-center">
+                    <TableHead class="min-w-[180px]">
                       New Customers
                     </TableHead>
-                    <TableHead class="min-w-[220px] text-center">
+                    <TableHead class="min-w-[220px]">
                       Cumulative Customers
                     </TableHead>
                   </TableRow>

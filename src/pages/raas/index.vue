@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const router = useRouter()
-router.replace({ name: '/raas/dashboard/' })
+router.replace('/marketing/wecom-leads')
 </script>
 
 <template>

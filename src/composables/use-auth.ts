@@ -17,7 +17,7 @@ export function useAuth() {
   }
 
   function toHome() {
-    router.push({ path: '/raas/dashboard' })
+    router.push({ path: '/marketing/wecom-leads' })
   }
 
   async function login(username: string, password: string) {

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 const router = useRouter()
-router.replace('/marketing/wecom-customers')
+router.replace('/marketing/wecom-leads')
 </script>
 
 <template>

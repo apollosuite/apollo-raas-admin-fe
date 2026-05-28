@@ -151,8 +151,16 @@ watch(() => privatePagination.value.page, (page) => {
   privatePageJump.value = String(page)
 })
 
+watch(() => privatePagination.value.pageSize, () => {
+  privatePagination.value.page = 1
+})
+
 watch(() => groupPagination.value.page, (page) => {
   groupPageJump.value = String(page)
+})
+
+watch(() => groupPagination.value.pageSize, () => {
+  groupPagination.value.page = 1
 })
 
 watch(privateFilters, () => {
@@ -423,6 +431,25 @@ function jumpGroupPage() {
                 Page {{ privatePagination.page }} of {{ privateQuery.data.value?.total_pages ?? 1 }}
               </div>
               <div class="flex items-center gap-2">
+                <Select v-model="privatePagination.pageSize">
+                  <SelectTrigger class="w-[132px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="10">
+                      10 / page
+                    </SelectItem>
+                    <SelectItem :value="20">
+                      20 / page
+                    </SelectItem>
+                    <SelectItem :value="50">
+                      50 / page
+                    </SelectItem>
+                    <SelectItem :value="100">
+                      100 / page
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
                 <Button variant="outline" size="sm" :disabled="privatePagination.page <= 1" @click="privatePagination.page -= 1">
                   Previous
                 </Button>
@@ -628,6 +655,25 @@ function jumpGroupPage() {
                 Page {{ groupPagination.page }} of {{ groupQuery.data.value?.total_pages ?? 1 }}
               </div>
               <div class="flex items-center gap-2">
+                <Select v-model="groupPagination.pageSize">
+                  <SelectTrigger class="w-[132px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem :value="10">
+                      10 / page
+                    </SelectItem>
+                    <SelectItem :value="20">
+                      20 / page
+                    </SelectItem>
+                    <SelectItem :value="50">
+                      50 / page
+                    </SelectItem>
+                    <SelectItem :value="100">
+                      100 / page
+                    </SelectItem>
+                  </SelectContent>
+                </Select>
                 <Button variant="outline" size="sm" :disabled="groupPagination.page <= 1" @click="groupPagination.page -= 1">
                   Previous
                 </Button>

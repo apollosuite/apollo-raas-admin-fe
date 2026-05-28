@@ -158,6 +158,10 @@ watch(() => pagination.value.page, (page) => {
   pageJump.value = String(page)
 })
 
+watch(() => pagination.value.pageSize, () => {
+  pagination.value.page = 1
+})
+
 watch(sorting, () => {
   pagination.value.page = 1
 }, { deep: true })
@@ -758,6 +762,25 @@ onBeforeUnmount(stopColumnResize)
               Page {{ pagination.page }} of {{ leadsQuery.data.value?.total_pages ?? 1 }}
             </div>
             <div class="flex items-center gap-2">
+              <Select v-model="pagination.pageSize">
+                <SelectTrigger class="w-[132px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem :value="10">
+                    10 / page
+                  </SelectItem>
+                  <SelectItem :value="20">
+                    20 / page
+                  </SelectItem>
+                  <SelectItem :value="50">
+                    50 / page
+                  </SelectItem>
+                  <SelectItem :value="100">
+                    100 / page
+                  </SelectItem>
+                </SelectContent>
+              </Select>
               <Button variant="outline" size="sm" :disabled="pagination.page <= 1" @click="pagination.page -= 1">
                 Previous
               </Button>
@@ -797,7 +820,8 @@ onBeforeUnmount(stopColumnResize)
 <style scoped>
 .leads-table-frame {
   max-width: 100%;
-  max-height: calc(100vh - 340px);
+  max-height: calc(100vh - 270px);
+  min-height: 520px;
   overflow: auto;
   isolation: isolate;
 }

@@ -252,7 +252,7 @@ function relationTags(tags: unknown) {
           Customer List
         </TabsTrigger>
         <TabsTrigger value="analytics">
-          Analytics
+          Daily Feed Analytic
         </TabsTrigger>
       </TabsList>
 
@@ -572,7 +572,7 @@ function relationTags(tags: unknown) {
               </div>
               <div class="flex items-center gap-2">
                 <Select v-model="pagination.pageSize">
-                  <SelectTrigger class="w-[110px]">
+                  <SelectTrigger class="w-[132px]">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>

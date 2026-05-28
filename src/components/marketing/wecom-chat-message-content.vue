@@ -1,16 +1,24 @@
 <script setup lang="ts">
-import { Download, ExternalLink, FileText } from 'lucide-vue-next'
-import { computed } from 'vue'
+import { Download, ExternalLink, FileText, RotateCcw, ZoomIn, ZoomOut } from 'lucide-vue-next'
+import { computed, ref, watch } from 'vue'
 
 import type { WeComChatMessage } from '@/services/types/marketing.type'
 
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 const props = defineProps<{
   message: WeComChatMessage
 }>()
 
+const imagePreviewOpen = ref(false)
+const imageZoom = ref(1)
 const mediaUrl = computed(() => props.message.media?.url || '')
 const linkUrl = computed(() => props.message.link?.url || '')
 const mediaName = computed(() => props.message.media?.filename || props.message.content_text || props.message.msgtype || 'Attachment')
@@ -40,6 +48,20 @@ function formatBytes(value?: number | null) {
 
   return `${size.toFixed(unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
+
+function openImagePreview() {
+  imageZoom.value = 1
+  imagePreviewOpen.value = true
+}
+
+function zoomImage(delta: number) {
+  imageZoom.value = Math.min(3, Math.max(0.5, Number((imageZoom.value + delta).toFixed(2))))
+}
+
+watch(mediaUrl, () => {
+  imagePreviewOpen.value = false
+  imageZoom.value = 1
+})
 </script>
 
 <template>
@@ -80,12 +102,11 @@ function formatBytes(value?: number | null) {
   </a>
 
   <template v-else-if="mediaUrl">
-    <a
+    <button
       v-if="message.msgtype === 'image' || message.msgtype === 'emotion'"
-      :href="mediaUrl"
-      target="_blank"
-      rel="noreferrer"
-      class="block"
+      type="button"
+      class="block cursor-zoom-in rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2"
+      @click="openImagePreview"
     >
       <img
         :src="mediaUrl"
@@ -93,7 +114,50 @@ function formatBytes(value?: number | null) {
         class="max-h-[320px] max-w-full rounded-md object-contain"
         loading="lazy"
       >
-    </a>
+    </button>
+
+    <Dialog v-if="message.msgtype === 'image' || message.msgtype === 'emotion'" v-model:open="imagePreviewOpen">
+      <DialogContent class="max-w-[92vw] gap-3 p-4 sm:max-w-[820px]">
+        <DialogHeader class="pr-8">
+          <DialogTitle class="truncate text-base">
+            {{ mediaName }}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div class="flex items-center justify-between gap-3">
+          <div class="text-xs text-muted-foreground">
+            {{ Math.round(imageZoom * 100) }}%
+          </div>
+          <div class="flex items-center gap-1">
+            <Button variant="outline" size="icon-sm" :disabled="imageZoom <= 0.5" @click="zoomImage(-0.25)">
+              <ZoomOut class="size-4" />
+              <span class="sr-only">Zoom out</span>
+            </Button>
+            <Button variant="outline" size="icon-sm" @click="imageZoom = 1">
+              <RotateCcw class="size-4" />
+              <span class="sr-only">Reset zoom</span>
+            </Button>
+            <Button variant="outline" size="icon-sm" :disabled="imageZoom >= 3" @click="zoomImage(0.25)">
+              <ZoomIn class="size-4" />
+              <span class="sr-only">Zoom in</span>
+            </Button>
+          </div>
+        </div>
+
+        <div class="flex max-h-[72vh] items-center justify-center overflow-auto rounded-md bg-muted/30 p-3">
+          <img
+            :src="mediaUrl"
+            :alt="mediaName"
+            class="h-auto rounded-md object-contain"
+            :style="{
+              width: `${imageZoom * 100}%`,
+              maxWidth: imageZoom <= 1 ? '100%' : 'none',
+              maxHeight: imageZoom <= 1 ? '68vh' : 'none',
+            }"
+          >
+        </div>
+      </DialogContent>
+    </Dialog>
 
     <video
       v-else-if="message.msgtype === 'video'"

@@ -132,8 +132,16 @@ declare module 'vue-router/auto-routes' {
       '/marketing/wecom-chat-history',
       Record<never, never>,
       Record<never, never>,
+      | '/marketing/wecom-chat-history/[external_userid]'
       | '/marketing/wecom-chat-history/group/[roomid]'
       | '/marketing/wecom-chat-history/private/[thread_id]'
+    >,
+    '/marketing/wecom-chat-history/[external_userid]': RouteRecordInfo<
+      '/marketing/wecom-chat-history/[external_userid]',
+      '/marketing/wecom-chat-history/:external_userid',
+      { external_userid: ParamValue<true> },
+      { external_userid: ParamValue<false> },
+      | never
     >,
     '/marketing/wecom-chat-history/group/[roomid]': RouteRecordInfo<
       '/marketing/wecom-chat-history/group/[roomid]',
@@ -320,10 +328,17 @@ declare module 'vue-router/auto-routes' {
     'src/pages/marketing/wecom-chat-history.vue': {
       routes:
         | '/marketing/wecom-chat-history'
+        | '/marketing/wecom-chat-history/[external_userid]'
         | '/marketing/wecom-chat-history/group/[roomid]'
         | '/marketing/wecom-chat-history/private/[thread_id]'
       views:
         | 'default'
+    }
+    'src/pages/marketing/wecom-chat-history/[external_userid].vue': {
+      routes:
+        | '/marketing/wecom-chat-history/[external_userid]'
+      views:
+        | never
     }
     'src/pages/marketing/wecom-chat-history/group/[roomid].vue': {
       routes:

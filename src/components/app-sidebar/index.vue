@@ -1,7 +1,16 @@
 <script lang="ts" setup>
+import { useAuthStore } from '@/stores/auth'
+
 import { sidebarData } from './data/sidebar-data'
 import NavFooter from './nav-footer.vue'
 import NavTeam from './nav-team.vue'
+
+const authStore = useAuthStore()
+const sidebarUser = computed(() => ({
+  name: authStore.name || authStore.username || sidebarData.user.name,
+  email: authStore.email || (authStore.authType === 'feishu' ? 'Feishu account' : sidebarData.user.email),
+  avatar: authStore.avatarUrl || sidebarData.user.avatar,
+}))
 </script>
 
 <template>
@@ -23,7 +32,7 @@ import NavTeam from './nav-team.vue'
     </UiSidebarContent>
 
     <UiSidebarFooter>
-      <NavFooter :user="sidebarData.user" />
+      <NavFooter :user="sidebarUser" />
     </UiSidebarFooter>
 
     <UiSidebarRail />

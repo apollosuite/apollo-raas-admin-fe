@@ -252,7 +252,7 @@ function relationTags(tags: unknown) {
           Customer List
         </TabsTrigger>
         <TabsTrigger value="analytics">
-          Daily Feed Analytic
+          Daily Feed
         </TabsTrigger>
       </TabsList>
 
@@ -725,10 +725,10 @@ function relationTags(tags: unknown) {
                     <TableCell>
                       {{ row.added_date }}
                     </TableCell>
-                    <TableCell class="text-right tabular-nums">
+                    <TableCell class="tabular-nums">
                       {{ row.new_customer_count }}
                     </TableCell>
-                    <TableCell class="text-right tabular-nums">
+                    <TableCell class="tabular-nums">
                       {{ row.cumulative_customer_count }}
                     </TableCell>
                   </TableRow>

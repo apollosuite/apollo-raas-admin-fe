@@ -83,7 +83,13 @@ export function useAuth() {
   }
 
   function loginWithFeishu() {
-    const redirect = safeRedirectPath(router.currentRoute.value.query.redirect || router.currentRoute.value.fullPath)
+    const currentRoute = router.currentRoute.value
+    const redirectSource = currentRoute.query.redirect || (
+      currentRoute.path.startsWith('/auth')
+        ? '/marketing/wecom-leads'
+        : currentRoute.fullPath
+    )
+    const redirect = safeRedirectPath(redirectSource)
     const apiBase = `${env.VITE_SERVER_API_URL}${env.VITE_SERVER_API_PREFIX}`
     window.location.href = `${apiBase}/auth/feishu/start?redirect=${encodeURIComponent(redirect)}`
   }

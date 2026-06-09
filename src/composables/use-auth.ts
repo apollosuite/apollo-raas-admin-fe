@@ -2,6 +2,7 @@ import { storeToRefs } from 'pinia'
 
 import { useAxios } from '@/composables/use-axios'
 import { useAuthStore } from '@/stores/auth'
+import env from '@/utils/env'
 
 export function useAuth() {
   const router = useRouter()
@@ -11,13 +12,53 @@ export function useAuth() {
   const loading = ref(false)
   const error = ref('')
 
-  function logout() {
-    authStore.clearAuth()
-    router.push({ path: '/auth/sign-in' })
+  function safeRedirectPath(value: unknown) {
+    if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) {
+      return '/marketing/wecom-leads'
+    }
+    try {
+      const parsedRedirect = new URL(value, window.location.origin)
+      return parsedRedirect.origin === window.location.origin ? value : '/marketing/wecom-leads'
+    }
+    catch {
+      return '/marketing/wecom-leads'
+    }
   }
 
-  function toHome() {
-    router.push({ path: '/marketing/wecom-leads' })
+  async function fetchCurrentUser() {
+    try {
+      const { axiosInstance } = useAxios()
+      const response = await axiosInstance.get('/auth/me')
+      authStore.setUser({
+        username: response.data.username,
+        name: response.data.name,
+        email: response.data.email,
+        avatarUrl: response.data.avatar_url,
+        authType: response.data.auth_type,
+        feishuUserId: response.data.feishu_user_id,
+        feishuOpenId: response.data.feishu_open_id,
+        feishuUnionId: response.data.feishu_union_id,
+        tenantKey: response.data.tenant_key,
+        employeeNo: response.data.employee_no,
+      })
+      return true
+    }
+    catch {
+      authStore.markSessionChecked()
+      return false
+    }
+  }
+
+  async function logout() {
+    try {
+      const { axiosInstance } = useAxios()
+      await axiosInstance.post('/auth/logout')
+    }
+    catch {
+      // Local logout should still proceed when the server session is already gone.
+    }
+    authStore.clearAuth()
+    router.push({ path: '/auth/sign-in' })
   }
 
   async function login(username: string, password: string) {
@@ -31,28 +72,7 @@ export function useAuth() {
 
       authStore.setAuth(access_token, name)
 
-      const redirect = router.currentRoute.value.query.redirect as string
-      // 更安全的重定向检查，防止开放重定向漏洞
-      if (redirect && !redirect.startsWith('//') && redirect.startsWith('/')) {
-        // 验证重定向路径是否为有效的内部路径
-        try {
-          // 尝试解析重定向路径，防止恶意URL
-          const parsedRedirect = new URL(redirect, window.location.origin)
-          if (parsedRedirect.origin === window.location.origin) {
-            router.push(redirect)
-          }
-          else {
-            toHome()
-          }
-        }
-        catch {
-          // 如果重定向路径无效，则导航到主页
-          toHome()
-        }
-      }
-      else {
-        toHome()
-      }
+      router.push(safeRedirectPath(router.currentRoute.value.query.redirect))
     }
     catch (e: any) {
       error.value = e?.response?.data?.detail || 'Login failed'
@@ -62,11 +82,19 @@ export function useAuth() {
     }
   }
 
+  function loginWithFeishu() {
+    const redirect = safeRedirectPath(router.currentRoute.value.query.redirect || router.currentRoute.value.fullPath)
+    const apiBase = `${env.VITE_SERVER_API_URL}${env.VITE_SERVER_API_PREFIX}`
+    window.location.href = `${apiBase}/auth/feishu/start?redirect=${encodeURIComponent(redirect)}`
+  }
+
   return {
     loading,
     error,
     isLogin,
     logout,
     login,
+    loginWithFeishu,
+    fetchCurrentUser,
   }
 }

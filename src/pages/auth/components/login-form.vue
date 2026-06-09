@@ -3,10 +3,16 @@ import { useAuth } from '@/composables/use-auth'
 
 const username = ref('')
 const password = ref('')
-const { login, loading, error } = useAuth()
+const feishuLoading = ref(false)
+const { login, loginWithFeishu, loading, error } = useAuth()
 
 function handleLogin() {
   login(username.value, password.value)
+}
+
+function handleFeishuLogin() {
+  feishuLoading.value = true
+  loginWithFeishu()
 }
 </script>
 
@@ -17,12 +23,26 @@ function handleLogin() {
         Apollo Admin Login
       </UiCardTitle>
       <UiCardDescription>
-        Enter your credentials to access the dashboard.
+        Sign in with your Apollo Feishu account.
       </UiCardDescription>
     </UiCardHeader>
     <UiCardContent class="grid gap-4">
       <div v-if="error" class="rounded-md bg-destructive/15 p-3 text-sm text-destructive">
         {{ error }}
+      </div>
+
+      <UiButton type="button" class="w-full" :disabled="feishuLoading" @click="handleFeishuLogin">
+        <UiSpinner v-if="feishuLoading" class="mr-2" />
+        Continue with Feishu
+      </UiButton>
+
+      <div class="relative py-2">
+        <div class="absolute inset-0 flex items-center">
+          <span class="w-full border-t" />
+        </div>
+        <div class="relative flex justify-center text-xs uppercase">
+          <span class="bg-card px-2 text-muted-foreground">Password fallback</span>
+        </div>
       </div>
 
       <form class="grid gap-4" @submit.prevent="handleLogin">

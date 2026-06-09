@@ -18,6 +18,7 @@ function createAxiosInstanceWithInterceptors(timeout: number) {
   const axiosInstance = axios.create({
     baseURL: env.VITE_SERVER_API_URL + env.VITE_SERVER_API_PREFIX,
     timeout,
+    withCredentials: true,
     paramsSerializer: {
       indexes: null, // 使用 `key=value1&key=value2` 格式而不是 `key[]=value1&key[]=value2`
     },
@@ -42,7 +43,13 @@ function createAxiosInstanceWithInterceptors(timeout: number) {
 
       // 如果有全局路由器实例，则使用它进行导航，否则回退到传统的页面重定向
       if (globalRouter) {
-        globalRouter.push('/auth/sign-in')
+        const current = globalRouter.currentRoute?.value
+        globalRouter.push({
+          path: '/auth/sign-in',
+          query: current?.fullPath && current.fullPath !== '/auth/sign-in'
+            ? { redirect: current.fullPath }
+            : undefined,
+        })
       }
       else {
         window.location.href = '/auth/sign-in'

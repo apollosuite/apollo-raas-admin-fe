@@ -97,4 +97,7 @@ declare global {
   // @ts-ignore
   export type { Theme, Radius, ContentLayout } from '../constants/themes'
   import('../constants/themes')
+  // @ts-ignore
+  export type { AuthUserProfile } from '../stores/auth'
+  import('../stores/auth')
 }

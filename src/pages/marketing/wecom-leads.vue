@@ -75,6 +75,7 @@ const lastMessageToCalendarOpen = ref(false)
 const fullRunDialogOpen = ref(false)
 const selectionBulkActionsOpen = ref(false)
 const isAddingAllTargets = ref(false)
+const checkedLeadMap = ref<Record<string, WeComLeadTaggingTarget>>({})
 const selectedLeadMap = ref<Record<string, WeComLeadTaggingTarget>>({})
 const sorting = ref<{ sortBy: WeComLeadListParams['sort_by'], sortDir: 'asc' | 'desc' }>({
   sortBy: 'last_messaged',
@@ -112,8 +113,8 @@ function dateParam(value: string) {
   return datePattern.test(trimmed) ? trimmed : undefined
 }
 
-function numberParam(value: string) {
-  const trimmed = value.trim()
+function numberParam(value: unknown) {
+  const trimmed = String(value ?? '').trim()
   if (!trimmed)
     return undefined
   const parsed = Number(trimmed)
@@ -198,15 +199,22 @@ const manualDisabled = computed(() => {
 
 const salesTagRules = computed(() => promptsQuery.data.value?.tag_rules ?? [])
 const currentLeads = computed(() => leadsQuery.data.value?.items ?? [])
+const checkedLeads = computed(() => Object.values(checkedLeadMap.value))
+const checkedCount = computed(() => checkedLeads.value.length)
 const selectedLeads = computed(() => Object.values(selectedLeadMap.value))
 const selectedCount = computed(() => selectedLeads.value.length)
-const currentPageSelectedCount = computed(() => currentLeads.value.filter(lead => isLeadSelected(lead)).length)
+const currentPageSelectedCount = computed(() => currentLeads.value.filter(lead => isLeadChecked(lead)).length)
 const currentPageSelectionState = computed(() => {
   if (currentLeads.value.length > 0 && currentPageSelectedCount.value === currentLeads.value.length)
     return true
   if (currentPageSelectedCount.value > 0)
     return 'indeterminate'
   return false
+})
+const headerSelectionState = computed(() => currentPageSelectionState.value)
+
+watch(checkedCount, (count) => {
+  selectionBulkActionsOpen.value = count > 0
 })
 
 const visibleColumnIds = computed(() => [
@@ -265,22 +273,22 @@ function leadTarget(lead: WeComLead): WeComLeadTaggingTarget {
   }
 }
 
-function isLeadSelected(lead: WeComLead) {
-  return !!selectedLeadMap.value[leadKey(lead)]
+function isLeadChecked(lead: WeComLead) {
+  return !!checkedLeadMap.value[leadKey(lead)]
 }
 
-function setLeadSelected(lead: WeComLead, checked: boolean | 'indeterminate') {
-  const next = { ...selectedLeadMap.value }
+function setLeadChecked(lead: WeComLead, checked: boolean | 'indeterminate') {
+  const next = { ...checkedLeadMap.value }
   const key = leadKey(lead)
   if (checked === true)
     next[key] = leadTarget(lead)
   else
     delete next[key]
-  selectedLeadMap.value = next
+  checkedLeadMap.value = next
 }
 
-function setCurrentPageSelected(checked: boolean | 'indeterminate') {
-  const next = { ...selectedLeadMap.value }
+function setCurrentPageChecked(checked: boolean | 'indeterminate') {
+  const next = { ...checkedLeadMap.value }
   for (const lead of currentLeads.value) {
     const key = leadKey(lead)
     if (checked === true)
@@ -288,7 +296,7 @@ function setCurrentPageSelected(checked: boolean | 'indeterminate') {
     else
       delete next[key]
   }
-  selectedLeadMap.value = next
+  checkedLeadMap.value = next
 }
 
 function addTargets(targets: WeComLeadTaggingTarget[]) {
@@ -299,16 +307,17 @@ function addTargets(targets: WeComLeadTaggingTarget[]) {
 }
 
 function handleHeaderSelection(checked: boolean | 'indeterminate') {
-  if (checked === true) {
-    selectionBulkActionsOpen.value = true
-    return
-  }
-  setCurrentPageSelected(false)
+  setCurrentPageChecked(checked)
+}
+
+function addCheckedTargets() {
+  addTargets(checkedLeads.value)
+  checkedLeadMap.value = {}
 }
 
 function addCurrentPageTargets() {
   addTargets(currentLeads.value.map(leadTarget))
-  selectionBulkActionsOpen.value = false
+  checkedLeadMap.value = {}
 }
 
 async function addAllFilteredTargets() {
@@ -334,7 +343,7 @@ async function addAllFilteredTargets() {
     }
 
     addTargets(targets)
-    selectionBulkActionsOpen.value = false
+    checkedLeadMap.value = {}
   }
   finally {
     isAddingAllTargets.value = false
@@ -344,6 +353,7 @@ async function addAllFilteredTargets() {
 function clearSelectedLeads() {
   selectedLeadMap.value = {}
   selectionBulkActionsOpen.value = false
+  checkedLeadMap.value = {}
 }
 
 function toggleSort(sortBy: NonNullable<WeComLeadListParams['sort_by']>) {
@@ -731,7 +741,7 @@ onBeforeUnmount(stopColumnResize)
                 <tr>
                   <th class="sticky-table-head sticky-left-cell z-40 text-center" :style="pinnedLeftStyle('select')">
                     <Checkbox
-                      :model-value="currentPageSelectionState"
+                      :model-value="headerSelectionState"
                       :disabled="currentLeads.length === 0"
                       aria-label="Select current page leads"
                       @update:model-value="handleHeaderSelection"
@@ -816,9 +826,9 @@ onBeforeUnmount(stopColumnResize)
                 <tr v-for="lead in leadsQuery.data.value?.items ?? []" v-else :key="`${lead.thread_type}:${lead.thread_id}`">
                   <td class="sticky-left-cell z-30 text-center" :style="pinnedLeftStyle('select')">
                     <Checkbox
-                      :model-value="isLeadSelected(lead)"
+                      :model-value="isLeadChecked(lead)"
                       :aria-label="`Select ${lead.contact_name}`"
-                      @update:model-value="checked => setLeadSelected(lead, checked)"
+                      @update:model-value="checked => setLeadChecked(lead, checked)"
                     />
                   </td>
                   <td class="sticky-left-cell z-20" :style="pinnedLeftStyle('contact')">
@@ -935,6 +945,13 @@ onBeforeUnmount(stopColumnResize)
         </span>
         <Button
           size="sm"
+          :disabled="checkedCount === 0"
+          @click="addCheckedTargets"
+        >
+          Add selected ({{ checkedCount }})
+        </Button>
+        <Button
+          size="sm"
           variant="outline"
           :disabled="currentLeads.length === 0"
           @click="addCurrentPageTargets"
@@ -949,7 +966,7 @@ onBeforeUnmount(stopColumnResize)
           <RefreshCw v-if="isAddingAllTargets" class="mr-2 size-4 animate-spin" />
           Add all ({{ leadsQuery.data.value?.total ?? 0 }})
         </Button>
-        <Button variant="ghost" size="sm" @click="selectionBulkActionsOpen = false">
+        <Button variant="ghost" size="sm" @click="checkedLeadMap = {}">
           Cancel
         </Button>
       </div>

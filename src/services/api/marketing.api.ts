@@ -20,6 +20,7 @@ import type {
   WeComLeadListResponse,
   WeComLeadPromptConfig,
   WeComLeadPromptUpdate,
+  WeComLeadTargetListResponse,
   WeComLeadTriggerRequest,
   WeComLeadTriggerResponse,
 } from '../types/marketing.type'
@@ -197,6 +198,14 @@ export function useMarketingApi() {
     })
   }
 
+  const fetchWeComLeadTaggingTargets = async (params: WeComLeadListParams) => {
+    const response = await axiosInstance.get<WeComLeadTargetListResponse>(
+      '/marketing/wecom/leads/tagging-targets',
+      { params: compactMarketingParams(params) },
+    )
+    return response.data
+  }
+
   const useTriggerWeComLeadTaggingJob = () => {
     return useMutation({
       mutationFn: async (payload: WeComLeadTriggerRequest = {}) => {
@@ -222,6 +231,7 @@ export function useMarketingApi() {
     useGetWeComLeadPrompts,
     useSaveWeComLeadPrompts,
     useGetWeComLeadLatestJob,
+    fetchWeComLeadTaggingTargets,
     useTriggerWeComLeadTaggingJob,
   }
 }

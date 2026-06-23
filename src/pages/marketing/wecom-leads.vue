@@ -63,12 +63,18 @@ const filters = ref({
   status: 'all',
   last_message_from: '',
   last_message_to: '',
+  min_apollo_messages: '',
+  max_apollo_messages: '',
+  min_replies: '',
+  max_replies: '',
 })
 const pagination = ref({ page: 1, pageSize: 20 })
 const pageJump = ref('1')
 const lastMessageFromCalendarOpen = ref(false)
 const lastMessageToCalendarOpen = ref(false)
 const fullRunDialogOpen = ref(false)
+const selectionBulkActionsOpen = ref(false)
+const isAddingAllTargets = ref(false)
 const selectedLeadMap = ref<Record<string, WeComLeadTaggingTarget>>({})
 const sorting = ref<{ sortBy: WeComLeadListParams['sort_by'], sortDir: 'asc' | 'desc' }>({
   sortBy: 'last_messaged',
@@ -81,6 +87,7 @@ const {
   useGetWeComLeads,
   useGetWeComLeadPrompts,
   useGetWeComLeadLatestJob,
+  fetchWeComLeadTaggingTargets,
   useTriggerWeComLeadTaggingJob,
 } = useMarketingApi()
 
@@ -103,6 +110,14 @@ let resizeStartWidth = 0
 function dateParam(value: string) {
   const trimmed = value.trim()
   return datePattern.test(trimmed) ? trimmed : undefined
+}
+
+function numberParam(value: string) {
+  const trimmed = value.trim()
+  if (!trimmed)
+    return undefined
+  const parsed = Number(trimmed)
+  return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
 }
 
 function calendarDate(value: string) {
@@ -141,8 +156,19 @@ const leadParams = computed<WeComLeadListParams>(() => ({
   status: filters.value.status === 'all' ? undefined : filters.value.status,
   last_message_from: dateParam(filters.value.last_message_from),
   last_message_to: dateParam(filters.value.last_message_to),
+  min_apollo_messages: numberParam(filters.value.min_apollo_messages),
+  max_apollo_messages: numberParam(filters.value.max_apollo_messages),
+  min_replies: numberParam(filters.value.min_replies),
+  max_replies: numberParam(filters.value.max_replies),
   sort_by: sorting.value.sortBy,
   sort_dir: sorting.value.sortDir,
+}))
+
+const targetParams = computed<WeComLeadListParams>(() => ({
+  ...leadParams.value,
+  page: undefined,
+  page_size: undefined,
+  limit: undefined,
 }))
 
 const leadsQuery = useGetWeComLeads(leadParams)
@@ -221,6 +247,10 @@ function clearFilters() {
     status: 'all',
     last_message_from: '',
     last_message_to: '',
+    min_apollo_messages: '',
+    max_apollo_messages: '',
+    min_replies: '',
+    max_replies: '',
   }
 }
 
@@ -261,8 +291,59 @@ function setCurrentPageSelected(checked: boolean | 'indeterminate') {
   selectedLeadMap.value = next
 }
 
+function addTargets(targets: WeComLeadTaggingTarget[]) {
+  const next = { ...selectedLeadMap.value }
+  for (const target of targets)
+    next[`${target.thread_type}:${target.thread_id}`] = target
+  selectedLeadMap.value = next
+}
+
+function handleHeaderSelection(checked: boolean | 'indeterminate') {
+  if (checked === true) {
+    selectionBulkActionsOpen.value = true
+    return
+  }
+  setCurrentPageSelected(false)
+}
+
+function addCurrentPageTargets() {
+  addTargets(currentLeads.value.map(leadTarget))
+  selectionBulkActionsOpen.value = false
+}
+
+async function addAllFilteredTargets() {
+  isAddingAllTargets.value = true
+  try {
+    const batchSize = 5000
+    const total = leadsQuery.data.value?.total ?? 0
+    let offset = 0
+    let fetchedTotal = total
+    const targets: WeComLeadTaggingTarget[] = []
+
+    while (offset < fetchedTotal) {
+      const response = await fetchWeComLeadTaggingTargets({
+        ...targetParams.value,
+        limit: batchSize,
+        offset,
+      })
+      targets.push(...response.items)
+      fetchedTotal = response.total
+      if (response.items.length === 0)
+        break
+      offset += response.items.length
+    }
+
+    addTargets(targets)
+    selectionBulkActionsOpen.value = false
+  }
+  finally {
+    isAddingAllTargets.value = false
+  }
+}
+
 function clearSelectedLeads() {
   selectedLeadMap.value = {}
+  selectionBulkActionsOpen.value = false
 }
 
 function toggleSort(sortBy: NonNullable<WeComLeadListParams['sort_by']>) {
@@ -553,6 +634,54 @@ onBeforeUnmount(stopColumnResize)
                 </Popover>
               </div>
             </div>
+
+            <div class="space-y-1.5 xl:col-span-2">
+              <div class="text-xs font-medium text-muted-foreground">
+                Apollo Msgs
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <Input
+                  v-model="filters.min_apollo_messages"
+                  class="w-[120px]"
+                  inputmode="numeric"
+                  min="0"
+                  placeholder="Min"
+                  type="number"
+                />
+                <Input
+                  v-model="filters.max_apollo_messages"
+                  class="w-[120px]"
+                  inputmode="numeric"
+                  min="0"
+                  placeholder="Max"
+                  type="number"
+                />
+              </div>
+            </div>
+
+            <div class="space-y-1.5 xl:col-span-2">
+              <div class="text-xs font-medium text-muted-foreground">
+                Replies
+              </div>
+              <div class="flex flex-wrap gap-2">
+                <Input
+                  v-model="filters.min_replies"
+                  class="w-[120px]"
+                  inputmode="numeric"
+                  min="0"
+                  placeholder="Min"
+                  type="number"
+                />
+                <Input
+                  v-model="filters.max_replies"
+                  class="w-[120px]"
+                  inputmode="numeric"
+                  min="0"
+                  placeholder="Max"
+                  type="number"
+                />
+              </div>
+            </div>
           </div>
         </CardContent>
       </Card>
@@ -605,7 +734,7 @@ onBeforeUnmount(stopColumnResize)
                       :model-value="currentPageSelectionState"
                       :disabled="currentLeads.length === 0"
                       aria-label="Select current page leads"
-                      @update:model-value="setCurrentPageSelected"
+                      @update:model-value="handleHeaderSelection"
                     />
                   </th>
                   <th class="sticky-table-head sticky-left-cell z-30" :style="pinnedLeftStyle('contact')">
@@ -795,6 +924,35 @@ onBeforeUnmount(stopColumnResize)
           </div>
         </CardContent>
       </Card>
+    </div>
+    <div
+      v-if="selectionBulkActionsOpen"
+      class="fixed inset-x-0 bottom-6 z-50 flex justify-center px-4"
+    >
+      <div class="flex max-w-full flex-wrap items-center gap-2 rounded-lg border bg-background px-3 py-2 text-sm shadow-lg">
+        <span class="text-muted-foreground">
+          Add leads to LLM tagging candidates
+        </span>
+        <Button
+          size="sm"
+          variant="outline"
+          :disabled="currentLeads.length === 0"
+          @click="addCurrentPageTargets"
+        >
+          Add current page ({{ currentLeads.length }})
+        </Button>
+        <Button
+          size="sm"
+          :disabled="isAddingAllTargets || (leadsQuery.data.value?.total ?? 0) === 0"
+          @click="addAllFilteredTargets"
+        >
+          <RefreshCw v-if="isAddingAllTargets" class="mr-2 size-4 animate-spin" />
+          Add all ({{ leadsQuery.data.value?.total ?? 0 }})
+        </Button>
+        <Button variant="ghost" size="sm" @click="selectionBulkActionsOpen = false">
+          Cancel
+        </Button>
+      </div>
     </div>
     <AlertDialog v-model:open="fullRunDialogOpen">
       <AlertDialogContent>

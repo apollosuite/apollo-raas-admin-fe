@@ -21,7 +21,9 @@ export default defineConfig({
     }),
     vue(),
     vueJsx(),
-    vueDevTools(),
+    vueDevTools({
+      componentInspector: false,
+    }),
     tailwindcss(),
     visualizer({ gzipSize: true, brotliSize: true }),
     Layouts({

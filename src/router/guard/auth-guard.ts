@@ -14,9 +14,12 @@ export function authGuard(router: Router) {
 
     if (to.meta.auth && !unref(isLogin)) {
       try {
+        const headers = authStore.token
+          ? { Authorization: `Bearer ${authStore.token}` }
+          : undefined
         const response = await axios.get(
           `${env.VITE_SERVER_API_URL}${env.VITE_SERVER_API_PREFIX}/auth/me`,
-          { withCredentials: true },
+          { headers, withCredentials: true },
         )
         authStore.setUser({
           username: response.data.username,

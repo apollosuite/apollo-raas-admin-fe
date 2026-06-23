@@ -202,8 +202,14 @@ export interface WeComLeadListParams {
   last_message_to?: string
   min_quality_score?: number
   max_quality_score?: number
+  min_apollo_messages?: number
+  max_apollo_messages?: number
+  min_replies?: number
+  max_replies?: number
   sort_by?: 'score' | 'apollo_messages' | 'replies' | 'last_messaged'
   sort_dir?: 'asc' | 'desc'
+  limit?: number
+  offset?: number
 }
 
 export interface WeComLeadListResponse {
@@ -263,6 +269,11 @@ export interface WeComLeadLatestJobResponse {
 export interface WeComLeadTaggingTarget {
   thread_type: WeComChatThreadType
   thread_id: string
+}
+
+export interface WeComLeadTargetListResponse {
+  items: WeComLeadTaggingTarget[]
+  total: number
 }
 
 export interface WeComLeadTriggerRequest {

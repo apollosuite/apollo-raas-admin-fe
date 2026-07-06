@@ -277,6 +277,8 @@ function handleStructuredMetricKeyChange(value: unknown) {
 }
 
 function toggleDependency(metricKey: string) {
+  if (builderForm.type === 'atomic')
+    return
   if (builderForm.dependencies.includes(metricKey)) {
     builderForm.dependencies = builderForm.dependencies.filter(key => key !== metricKey)
     return
@@ -298,6 +300,7 @@ function toggleDimension(columnName: string) {
 
 function buildMetricFromBuilder(): MetricDefinition {
   const metricKey = builderForm.type === 'atomic' ? builderForm.key.trim() : toSnakeCase(builderForm.name)
+  const dependencies = builderForm.type === 'atomic' ? [] : builderForm.dependencies
   return {
     key: metricKey,
     name: builderForm.name.trim(),
@@ -305,7 +308,7 @@ function buildMetricFromBuilder(): MetricDefinition {
     category: builderForm.category.trim(),
     unit: builderForm.unit,
     description: builderForm.description.trim(),
-    dependencies: builderForm.dependencies,
+    dependencies,
     expression: builderForm.type === 'atomic'
       ? { kind: 'column_sum', column: builderForm.formula.trim() || metricKey }
       : { kind: 'formula', formula: builderForm.formula.trim() },
@@ -951,8 +954,8 @@ function badgeVariant(status: MetricStatus) {
                         <Label>Dependencies</Label>
                         <Popover>
                           <PopoverTrigger as-child>
-                            <Button variant="outline" class="w-full justify-start font-normal">
-                              <span class="truncate">{{ summarizeSelection(builderForm.dependencies, 'Select up to 2 atomic metrics') }}</span>
+                            <Button variant="outline" class="w-full justify-start font-normal" :disabled="builderForm.type === 'atomic'">
+                              <span class="truncate">{{ builderForm.type === 'atomic' ? 'Atomic metrics do not need dependencies' : summarizeSelection(builderForm.dependencies, 'Select up to 2 atomic metrics') }}</span>
                             </Button>
                           </PopoverTrigger>
                           <PopoverContent class="w-[320px] p-2" align="start">

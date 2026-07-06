@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 
-import { BarChart3, FilePenLine, MessageSquareText, UserRoundPlus, UsersRound } from 'lucide-vue-next'
+import { BarChart3, DatabaseZap, FilePenLine, MessageSquareText, UserRoundPlus, UsersRound } from 'lucide-vue-next'
 
 import type { NavGroup } from '@/components/app-sidebar/types'
 
@@ -18,6 +18,12 @@ export function useSidebar() {
       title: 'Dashboard',
       items: [
         { title: 'RAAS Dashboard', url: '/raas/dashboard', icon: BarChart3 },
+      ],
+    },
+    {
+      title: 'Data Governance',
+      items: [
+        { title: 'Metric Governance', url: '/raas/metric-governance', icon: DatabaseZap },
       ],
     },
     {

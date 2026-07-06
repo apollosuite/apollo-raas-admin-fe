@@ -185,6 +185,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/raas/metric-governance': RouteRecordInfo<
+      '/raas/metric-governance',
+      '/raas/metric-governance',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/settings/': RouteRecordInfo<
       '/settings/',
       '/settings',
@@ -373,6 +380,12 @@ declare module 'vue-router/auto-routes' {
     'src/pages/raas/dashboard/index.vue': {
       routes:
         | '/raas/dashboard/'
+      views:
+        | never
+    }
+    'src/pages/raas/metric-governance.vue': {
+      routes:
+        | '/raas/metric-governance'
       views:
         | never
     }

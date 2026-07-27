@@ -56,8 +56,10 @@ const staffOptions = [
   'apollo2',
   '19357635821',
 ]
+const initialThreadName = typeof route.query.thread_name === 'string' ? route.query.thread_name : ''
+const threadNameInput = ref(initialThreadName)
 const filters = ref({
-  thread_name: typeof route.query.thread_name === 'string' ? route.query.thread_name : '',
+  thread_name: initialThreadName,
   staff_userid: 'all',
   last_message_from: '',
   last_message_to: '',
@@ -150,10 +152,18 @@ watch(() => route.query.thread_name, (threadName) => {
   const nextThreadName = typeof threadName === 'string' ? threadName : ''
   if (filters.value.thread_name !== nextThreadName)
     filters.value.thread_name = nextThreadName
+
+  if (threadNameInput.value !== nextThreadName)
+    threadNameInput.value = nextThreadName
 })
 
-watch(() => filters.value.thread_name, (threadName) => {
-  const trimmed = threadName.trim()
+function applyThreadNameFilter() {
+  const trimmed = threadNameInput.value.trim()
+  threadNameInput.value = trimmed
+
+  if (filters.value.thread_name !== trimmed)
+    filters.value.thread_name = trimmed
+
   const current = typeof route.query.thread_name === 'string' ? route.query.thread_name : ''
   if (trimmed === current)
     return
@@ -165,15 +175,17 @@ watch(() => filters.value.thread_name, (threadName) => {
       thread_name: trimmed || undefined,
     },
   })
-})
+}
 
 function clearFilters() {
+  threadNameInput.value = ''
   filters.value = {
     thread_name: '',
     staff_userid: 'all',
     last_message_from: '',
     last_message_to: '',
   }
+  applyThreadNameFilter()
 }
 
 function refreshThreads() {
@@ -255,7 +267,12 @@ function jumpGroupPage() {
               <div class="text-xs font-medium text-muted-foreground">
                 Thread name
               </div>
-              <Input v-model="filters.thread_name" placeholder="Customer name, userid, group name, or roomid" />
+              <Input
+                v-model="threadNameInput"
+                placeholder="Customer name, userid, group name, or roomid"
+                @change="applyThreadNameFilter"
+                @keyup.enter="applyThreadNameFilter"
+              />
             </div>
             <div class="space-y-1.5">
               <div class="text-xs font-medium text-muted-foreground">

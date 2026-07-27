@@ -39,7 +39,7 @@ watch(data, (value) => {
     ...value.items.filter(message => !existingIds.has(message.msgid)),
     ...loadedMessages.value,
   ]
-})
+}, { immediate: true })
 
 function loadEarlierMessages() {
   if (hasEarlierMessages.value && !isFetching.value)

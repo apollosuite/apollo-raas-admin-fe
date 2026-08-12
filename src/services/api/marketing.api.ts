@@ -23,6 +23,12 @@ import type {
   WeComLeadTargetListResponse,
   WeComLeadTriggerRequest,
   WeComLeadTriggerResponse,
+  WeComMomentAccount,
+  WeComMomentAudiencePreview,
+  WeComMomentAudienceRequest,
+  WeComMomentDetail,
+  WeComMomentListResponse,
+  WeComMomentTag,
 } from '../types/marketing.type'
 
 export function compactMarketingParams<T extends object>(params: T): Partial<T> {
@@ -48,6 +54,54 @@ export function useMarketingApi() {
       staleTime: 1000 * 60 * 2,
     })
   }
+
+  const useGetWeComMoments = (params: MaybeRefOrGetter<{ page: number, page_size: number, status?: string }>) => useQuery({
+    queryKey: ['marketing', 'wecomMoments', params],
+    queryFn: async () => (await axiosInstance.get<WeComMomentListResponse>(
+      '/marketing/wecom/moments',
+      { params: compactMarketingParams(toValue(params)) },
+    )).data,
+    refetchInterval: 30_000,
+  })
+
+  const useGetWeComMoment = (id: MaybeRefOrGetter<string | undefined>) => useQuery({
+    queryKey: ['marketing', 'wecomMoment', id],
+    queryFn: async () => (await axiosInstance.get<WeComMomentDetail>(`/marketing/wecom/moments/${encodeURIComponent(toValue(id)!)}`)).data,
+    enabled: computed(() => !!toValue(id)),
+    refetchInterval: 30_000,
+  })
+
+  const useGetWeComMomentAccounts = () => useQuery({
+    queryKey: ['marketing', 'wecomMomentAccounts'],
+    queryFn: async () => (await axiosInstance.get<WeComMomentAccount[]>('/marketing/wecom/moment-accounts')).data,
+    staleTime: 300_000,
+  })
+
+  const useGetWeComMomentTags = () => useQuery({
+    queryKey: ['marketing', 'wecomMomentTags'],
+    queryFn: async () => (await axiosInstance.get<WeComMomentTag[]>('/marketing/wecom/moment-tags')).data,
+    staleTime: 300_000,
+  })
+
+  const usePreviewWeComMomentAudience = () => useMutation({
+    mutationFn: async (payload: WeComMomentAudienceRequest) => (await axiosInstance.post<WeComMomentAudiencePreview>(
+      '/marketing/wecom/moment-audiences/preview',
+      payload,
+    )).data,
+  })
+
+  const useCreateWeComMoment = () => useMutation({
+    mutationFn: async (payload: FormData) => (await axiosInstance.post<{ id: string, status: string }>(
+      '/marketing/wecom/moments',
+      payload,
+    )).data,
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['marketing', 'wecomMoments'] }),
+  })
+
+  const useDeleteWeComMoment = () => useMutation({
+    mutationFn: async (id: string) => axiosInstance.delete(`/marketing/wecom/moments/${encodeURIComponent(id)}`),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['marketing', 'wecomMoments'] }),
+  })
 
   const useGetWeComCustomerDetail = (externalUserid: MaybeRefOrGetter<string | undefined>) => {
     const enabled = computed(() => !!toValue(externalUserid))
@@ -220,6 +274,13 @@ export function useMarketingApi() {
   }
 
   return {
+    useGetWeComMoments,
+    useGetWeComMoment,
+    useGetWeComMomentAccounts,
+    useGetWeComMomentTags,
+    usePreviewWeComMomentAudience,
+    useCreateWeComMoment,
+    useDeleteWeComMoment,
     useGetWeComCustomers,
     useGetWeComCustomerDetail,
     useGetWeComCustomerAnalytics,

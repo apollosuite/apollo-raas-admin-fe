@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import Loading from '@/components/loading.vue'
 
 const router = useRouter()
-router.push('/marketing/wecom-leads')
+router.replace('/marketing/wecom-customers')
 </script>
 
 <template>

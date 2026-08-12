@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 
-import { BarChart3, FilePenLine, MessageSquareText, UserRoundPlus, UsersRound } from 'lucide-vue-next'
+import { Building2, ChartNoAxesCombined, Handshake, MessageSquareText, PackageCheck, QrCode, Sparkles, UserRoundPlus, UsersRound } from 'lucide-vue-next'
 
 import type { NavGroup } from '@/components/app-sidebar/types'
 
@@ -15,18 +15,28 @@ export function useSidebar() {
 
   const navData = ref<NavGroup[]> ([
     {
-      title: 'Dashboard',
+      title: 'Sales',
       items: [
-        { title: 'RAAS Dashboard', url: '/raas/dashboard', icon: BarChart3 },
+        { title: 'Contacts', url: '/marketing/wecom-customers', icon: UsersRound },
+        { title: 'Companies', url: '/sales/companies', icon: Building2 },
+        { title: 'Deals', url: '/sales/deals', icon: Handshake },
+        { title: 'Orders', url: '/sales/orders', icon: PackageCheck },
+        { title: 'Conversations', url: '/marketing/wecom-chat-history', icon: MessageSquareText },
+        { title: 'Dashboard', url: '/sales/dashboard', icon: ChartNoAxesCombined },
       ],
     },
     {
       title: 'Marketing',
       items: [
-        { title: 'WeCom Customers', url: '/marketing/wecom-customers', icon: UsersRound },
-        { title: 'WeCom Chat History', url: '/marketing/wecom-chat-history', icon: MessageSquareText },
-        { title: 'WeCom Leads', url: '/marketing/wecom-leads', icon: UserRoundPlus },
-        { title: 'Prompt Editor', url: '/marketing/prompt-editor', icon: FilePenLine },
+        { title: 'Lead Nurturing', url: '/marketing/wecom-leads', icon: UserRoundPlus },
+        { title: 'WeCom Moments', url: '/marketing/wecom-moments', icon: Sparkles },
+        { title: 'QR Codes', url: '/marketing/qr-codes', icon: QrCode },
+      ],
+    },
+    {
+      title: 'Services',
+      items: [
+        { title: 'RaaS', url: '/raas/dashboard', icon: ChartNoAxesCombined },
       ],
     },
   ])

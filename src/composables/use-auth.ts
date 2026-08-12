@@ -11,17 +11,18 @@ export function useAuth() {
   const { isLogin } = storeToRefs(authStore)
   const loading = ref(false)
   const error = ref('')
+  const defaultHome = '/marketing/wecom-customers'
 
   function safeRedirectPath(value: unknown) {
     if (typeof value !== 'string' || !value.startsWith('/') || value.startsWith('//')) {
-      return '/marketing/wecom-leads'
+      return defaultHome
     }
     try {
       const parsedRedirect = new URL(value, window.location.origin)
-      return parsedRedirect.origin === window.location.origin ? value : '/marketing/wecom-leads'
+      return parsedRedirect.origin === window.location.origin ? value : defaultHome
     }
     catch {
-      return '/marketing/wecom-leads'
+      return defaultHome
     }
   }
 
@@ -86,7 +87,7 @@ export function useAuth() {
     const currentRoute = router.currentRoute.value
     const redirectSource = currentRoute.query.redirect || (
       currentRoute.path.startsWith('/auth')
-        ? '/marketing/wecom-leads'
+        ? defaultHome
         : currentRoute.fullPath
     )
     const redirect = safeRedirectPath(redirectSource)

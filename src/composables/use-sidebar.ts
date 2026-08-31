@@ -1,6 +1,6 @@
 import type { Component } from 'vue'
 
-import { Building2, ChartNoAxesCombined, Handshake, MessageSquareText, PackageCheck, QrCode, Sparkles, UserRoundPlus, UsersRound } from 'lucide-vue-next'
+import { BarChart3, Bot, Building2, ChartNoAxesCombined, Handshake, MessageSquareText, PackageCheck, QrCode, Sparkles, UserRoundPlus, UsersRound } from 'lucide-vue-next'
 
 import type { NavGroup } from '@/components/app-sidebar/types'
 
@@ -37,6 +37,14 @@ export function useSidebar() {
       title: 'Services',
       items: [
         { title: 'RaaS', url: '/raas/dashboard', icon: ChartNoAxesCombined },
+      ],
+    },
+    {
+      title: 'Customer Tracking',
+      items: [
+        { title: 'Accounts', url: '/customer-tracking/accounts', icon: UsersRound },
+        { title: 'Performance', url: '/customer-tracking/performance', icon: BarChart3 },
+        { title: 'Agent Analytics', url: '/customer-tracking/agent', icon: Bot },
       ],
     },
   ])

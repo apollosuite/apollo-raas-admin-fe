@@ -59,6 +59,20 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/customer-tracking/': RouteRecordInfo<
+      '/customer-tracking/',
+      '/customer-tracking',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/customer-tracking/[...path]': RouteRecordInfo<
+      '/customer-tracking/[...path]',
+      '/customer-tracking/:path(.*)',
+      { path: ParamValue<true> },
+      { path: ParamValue<false> },
+      | never
+    >,
     '/errors': RouteRecordInfo<
       '/errors',
       '/errors',
@@ -311,6 +325,18 @@ declare module 'vue-router/auto-routes' {
     'src/pages/auth/sign-in.vue': {
       routes:
         | '/auth/sign-in'
+      views:
+        | never
+    }
+    'src/pages/customer-tracking/index.vue': {
+      routes:
+        | '/customer-tracking/'
+      views:
+        | never
+    }
+    'src/pages/customer-tracking/[...path].vue': {
+      routes:
+        | '/customer-tracking/[...path]'
       views:
         | never
     }

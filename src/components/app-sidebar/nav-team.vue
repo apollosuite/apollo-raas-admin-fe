@@ -19,7 +19,7 @@ function isCollapsed(menu: NavItem): boolean {
   const pathname = route.path
   navMain.forEach((group) => {
     group.items.forEach((item) => {
-      if (item.url === pathname) {
+      if (item.url && (item.url === pathname || pathname.startsWith(`${item.url}/`))) {
         return true
       }
     })
@@ -30,9 +30,9 @@ function isCollapsed(menu: NavItem): boolean {
 function isActive(menu: NavItem): boolean {
   const pathname = route.path
   if (menu.url) {
-    return pathname === menu.url
+    return pathname === menu.url || pathname.startsWith(`${menu.url}/`)
   }
-  return !!menu.items?.some(item => item.url === pathname)
+  return !!menu.items?.some(item => item.url && (item.url === pathname || pathname.startsWith(`${item.url}/`)))
 }
 </script>
 

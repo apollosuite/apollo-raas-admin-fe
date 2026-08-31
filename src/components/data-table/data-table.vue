@@ -32,7 +32,7 @@ function getCommonPinningStyles(column: Column<T>): CSSProperties {
   <div class="space-y-4">
     <slot name="toolbar" />
 
-    <div class="border rounded-md">
+    <div class="rounded-md border">
       <Table>
         <TableHeader>
           <TableRow v-for="headerGroup in table.getHeaderGroups()" :key="headerGroup.id">
@@ -40,7 +40,7 @@ function getCommonPinningStyles(column: Column<T>): CSSProperties {
               v-for="header in headerGroup.headers"
               :key="header.id"
               :style="getCommonPinningStyles(header.column)"
-              :class="{ 'bg-background': header.column.getIsPinned() }"
+              :class="header.column.getIsPinned() ? 'bg-background' : undefined"
             >
               <FlexRender v-if="!header.isPlaceholder" :render="header.column.columnDef.header" :props="header.getContext()" />
             </TableHead>
@@ -57,7 +57,7 @@ function getCommonPinningStyles(column: Column<T>): CSSProperties {
                 v-for="cell in row.getVisibleCells()"
                 :key="cell.id"
                 :style="getCommonPinningStyles(cell.column)"
-                :class="{ 'bg-background': cell.column.getIsPinned() }"
+                :class="cell.column.getIsPinned() ? 'bg-background' : undefined"
               >
                 <FlexRender :render="cell.column.columnDef.cell" :props="cell.getContext()" />
               </TableCell>

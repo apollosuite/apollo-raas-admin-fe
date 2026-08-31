@@ -1,0 +1,17 @@
+/* Hallmark · genre: modern-minimal · macrostructure: Workbench · theme: Studio · designed-as-app
+ * anchor hue: green · display: high-contrast-serif (page titles) · paper: light
+ * Reading comfort: text-sm body, generous row height, 4/8pt spacing — data-dense density removed.
+ */
+:root {
+  --studio-paper: #ffffff;
+  --studio-paper-2: #f8fafc;
+  --studio-ink: #1e293b;
+  --studio-ink-2: #64748b;
+  --studio-muted: #94a3b8;
+  --studio-rule: #e2e8f0;
+  --studio-hover: #eef2f7;
+  --studio-accent: #15803d;      /* links, hover */
+  --studio-accent-2: #16a34a;    /* active tab, focus ring, chart primary */
+  --studio-focus: #16a34a;
+  --studio-display: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}

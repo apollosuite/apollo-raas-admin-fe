@@ -30,6 +30,27 @@ function renderChart() {
   if (!chartEl.value)
     return
   chart ||= echarts.init(chartEl.value)
+  const cssVarColor = (name: string) => {
+    const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim()
+    try {
+      const canvas = document.createElement('canvas')
+      canvas.width = 1
+      canvas.height = 1
+      const ctx = canvas.getContext('2d')
+      if (!ctx)
+        return value
+      ctx.fillStyle = value
+      ctx.fillRect(0, 0, 1, 1)
+      const d = ctx.getImageData(0, 0, 1, 1).data
+      return `rgb(${d[0]}, ${d[1]}, ${d[2]})`
+    }
+    catch {
+      return value
+    }
+  }
+  const palette = ['--chart-1', '--chart-2', '--chart-3', '--chart-4'].map(cssVarColor)
+  const muted = cssVarColor('--muted-foreground')
+  const border = cssVarColor('--border')
   const labels = Array.from({ length: 30 }, (_, i) => `${i + 1}`)
   const series = selectedMetrics.value.map((metric, metricIndex) => ({
     name: metric,
@@ -40,13 +61,13 @@ function renderChart() {
     lineStyle: { width: 2 },
   }))
   chart.setOption({
-    color: ['#3b82f6', '#2563eb', '#64748b', '#94a3b8'],
-    title: { text: props.title, left: 0, top: 0, textStyle: { fontSize: 12, fontWeight: 500, color: '#64748b' } },
+    color: palette,
+    title: { text: props.title, left: 0, top: 0, textStyle: { fontSize: 12, fontWeight: 500, color: muted } },
     tooltip: { trigger: 'axis' },
     legend: { top: 0, right: 0, textStyle: { fontSize: 12 } },
     grid: { top: 34, left: 42, right: 16, bottom: 24 },
-    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: '#94a3b8', fontSize: 10 } },
-    yAxis: { type: 'value', axisLabel: { color: '#94a3b8', fontSize: 10 }, splitLine: { lineStyle: { color: '#e2e8f0' } } },
+    xAxis: { type: 'category', data: labels, boundaryGap: false, axisLabel: { color: muted, fontSize: 10 } },
+    yAxis: { type: 'value', axisLabel: { color: muted, fontSize: 10 }, splitLine: { lineStyle: { color: border } } },
     series,
   })
 }

@@ -49,25 +49,20 @@ function labelOf(key: string) {
   <div class="flex flex-wrap items-center gap-2">
     <UiDropdownMenu>
       <UiDropdownMenuTrigger as-child>
-        <button
-          class="inline-flex items-center gap-1 rounded border border-[#e2e8f0] bg-white px-2.5 py-1.5 text-sm text-[#64748b] transition-colors hover:bg-[#f8fafc] disabled:cursor-not-allowed disabled:opacity-50"
-          :disabled="availableColumns.length === 0"
-          aria-label="Add filter"
-        >
-          <Plus class="size-3.5" />
+        <UiButton variant="outline" size="sm" :disabled="availableColumns.length === 0">
+          <Plus data-icon="inline-start" />
           Filter
-        </button>
+        </UiButton>
       </UiDropdownMenuTrigger>
-      <UiDropdownMenuContent align="start" class="max-h-72 overflow-y-auto bg-white border-[#e2e8f0] shadow-sm">
+      <UiDropdownMenuContent align="start" class="max-h-72 overflow-y-auto">
         <UiDropdownMenuItem
           v-for="[key, label] in availableColumns"
           :key="key"
-          class="px-2 py-1.5 text-sm text-[#1e293b] hover:bg-[#f8fafc] focus:bg-[#f8fafc] focus:text-[#1e293b]"
           @click="addFilter(key)"
         >
           {{ label }}
         </UiDropdownMenuItem>
-        <div v-if="availableColumns.length === 0" class="px-2 py-1.5 text-sm text-[#94a3b8]">
+        <div v-if="availableColumns.length === 0" class="px-2 py-1.5 text-sm text-muted-foreground">
           All columns are already filtered
         </div>
       </UiDropdownMenuContent>
@@ -76,18 +71,18 @@ function labelOf(key: string) {
     <div
       v-for="f in modelValue"
       :key="f.key"
-      class="inline-flex items-center gap-1 rounded border border-[#e2e8f0] bg-white py-1 pl-2.5 pr-1 text-sm"
+      class="inline-flex items-center gap-1 rounded-md border bg-card py-1 pl-2.5 pr-1 text-sm"
     >
-      <span class="text-[#64748b]">{{ labelOf(f.key) }}</span>
+      <span class="text-muted-foreground">{{ labelOf(f.key) }}</span>
       <input
         :ref="el => setInputRef(f.key, el)"
         :value="f.value"
-        class="w-28 bg-transparent px-1 text-sm text-[#1e293b] outline-none placeholder:text-[#94a3b8]"
+        class="w-28 bg-transparent px-1 text-sm text-foreground outline-none placeholder:text-muted-foreground"
         placeholder="contains…"
         @input="setValue(f.key, ($event.target as HTMLInputElement).value)"
       >
       <button
-        class="rounded p-0.5 text-[#94a3b8] transition-colors hover:bg-[#f8fafc] hover:text-[#1e293b]"
+        class="rounded p-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         aria-label="Remove filter"
         @click="removeFilter(f.key)"
       >

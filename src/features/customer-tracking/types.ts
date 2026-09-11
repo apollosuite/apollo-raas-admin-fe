@@ -8,8 +8,8 @@ export interface ColumnFilter {
 }
 
 export interface Split { sp: number, sb: number, sd: number }
-export interface Account {
-  id: string
+export interface Organization {
+  orgId: string
   name: string
   plan: string
   status: Status
@@ -21,70 +21,93 @@ export interface Account {
   subConn: [number, number]
   ams: [number, number]
   sp: [number, number]
-  spend: number
-  spendSplit: Split
+  adSpend: number
+  adSpendSplit: Split
   chats: number
-  optEvents: number
-  schedRuns: number
+  optimizationEvents: number
+  scheduleRuns: number
+  launched: Split
+}
+export interface AdsAccount {
+  amazonAdsAccountId: string
+  orgId: string
+  name: string
+  profiles: [number, number]
+  ams: [number, number]
+  adSpendSplit: Split
+  chats: number
+  optimizationEvents: number
+  scheduleRuns: number
+  launched: Split
+}
+export interface SubAccount {
+  subAccountId: string
+  orgId: string
+  name: string
+  role: string
+  lastActive: string
+  adsAccess: [number, number]
+  profileAccess: [number, number]
+  chats: number
+  optimizationEvents: number
+  scheduleRuns: number
   launched: Split
 }
 export interface Profile {
-  id: string
+  amazonProfileId: string
   name: string
   marketplace: string
   entity: string
-  account: string
-  accountId: string
+  organization: string
+  orgId: string
   plan: string
-  joined: string
-  lastActive: string
-  renewal: string
+  connectedAt: string
   adsApi: boolean
   amsApi: boolean
   spApi: boolean
-  spend: number
-  sales: number
+  adSpend: number
+  adSales: number
   acos: number
   tacos: number
-  orders: number
-  impr: number
+  adOrders: number
+  impressions: number
   clicks: number
   cpc: number
   cvr: number
-  schedRuns: number
-  activeSched: number
-  optEvents: number
-  bids: number
-  budgets: number
-  placements: number
+  scheduleRuns: number
+  activeSchedules: number
+  optimizationEvents: number
+  bidsOptimized: number
+  budgetsOptimized: number
+  placementsOptimized: number
   chats: number
   launched: Split
   targeting: Split
 }
 export interface Campaign {
-  id: string
-  profileId: string
+  amazonCampaignId: string
+  amazonProfileId: string
   name: string
   adType: string
   managedBy: string[]
   affectedBy: string[]
   launchedBy: string
-  spend: number
-  sales: number
+  adSpend: number
+  adSales: number
   acos: number
-  orders: number
-  impr: number
+  adOrders: number
+  impressions: number
   clicks: number
   cpc: number
   cvr: number
-  optEvents: number
-  bids: number
-  budgets: number
-  placements: number
+  optimizationEvents: number
+  bidsOptimized: number
+  budgetsOptimized: number
+  placementsOptimized: number
 }
 export interface Schedule {
   id: string
-  profileId: string
+  amazonProfileId: string
   action: string
   adType: string
   name: string
@@ -96,8 +119,8 @@ export interface Schedule {
   runs: number
   managed: number
   unmanaged: number
-  bidsOpt: number
-  campLaunched: number
+  bidsOptimized: number
+  campaignsLaunched: number
   adGroups: number
   targeting: number
 }

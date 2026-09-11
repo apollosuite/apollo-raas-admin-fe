@@ -1,44 +1,56 @@
 <script setup lang="ts">
-import { actionCn, launchActions, optActions } from '../mock'
+import { ChevronDown } from 'lucide-vue-next'
+
+import type { Campaign } from '../types'
+
+import { actionCn } from '../mock'
+
+const props = defineProps<{
+  campaign: Campaign
+}>()
 
 const router = useRouter()
 
-function go(to: string) {
-  router.push(`/customer-tracking/${to}`)
+const optItems = [...new Set([...props.campaign.managedBy, ...props.campaign.affectedBy])]
+const launchItems = [props.campaign.launchedBy].filter(Boolean)
+
+function go(action: string) {
+  router.push(`/customer-tracking/performance/profile/${props.campaign.amazonProfileId}/schedules/${encodeURIComponent(action)}`)
 }
 </script>
 
 <template>
   <UiDropdownMenu>
     <UiDropdownMenuTrigger as-child>
-      <button class="rounded border border-[#e2e8f0] bg-white px-2.5 py-1.5 text-sm text-[#64748b] transition-colors hover:bg-[#f8fafc]">
-        Actions ▾
-      </button>
+      <UiButton variant="outline" size="sm">
+        Actions
+        <ChevronDown data-icon="inline-end" />
+      </UiButton>
     </UiDropdownMenuTrigger>
-    <UiDropdownMenuContent align="end" class="w-44 border-[#e2e8f0] bg-white text-[#1e293b] shadow-sm">
-      <UiDropdownMenuLabel class="px-2 py-1 text-xs font-medium uppercase tracking-wide text-[#94a3b8]">
+    <UiDropdownMenuContent align="end" class="w-44">
+      <UiDropdownMenuLabel class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
         Optimization actions
       </UiDropdownMenuLabel>
       <UiDropdownMenuItem
-        v-for="category in optActions"
+        v-for="category in optItems"
         :key="category"
-        class="px-2 py-1.5 text-sm text-[#1e293b] hover:bg-[#f8fafc] focus:bg-[#f8fafc] focus:text-[#1e293b]"
-        @click="go(`performance/schedules/${encodeURIComponent(category)}`)"
+        @click="go(category)"
       >
-        {{ actionCn[category] }}
+        {{ actionCn[category] || category }}
       </UiDropdownMenuItem>
-      <UiDropdownMenuSeparator class="bg-[#e2e8f0]" />
-      <UiDropdownMenuLabel class="px-2 py-1 text-xs font-medium uppercase tracking-wide text-[#94a3b8]">
-        Campaign launch actions
-      </UiDropdownMenuLabel>
-      <UiDropdownMenuItem
-        v-for="category in launchActions"
-        :key="category"
-        class="px-2 py-1.5 text-sm text-[#1e293b] hover:bg-[#f8fafc] focus:bg-[#f8fafc] focus:text-[#1e293b]"
-        @click="go(`performance/schedules/${encodeURIComponent(category)}`)"
-      >
-        {{ actionCn[category] }}
-      </UiDropdownMenuItem>
+      <template v-if="launchItems.length">
+        <UiDropdownMenuSeparator />
+        <UiDropdownMenuLabel class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          Campaign launch actions
+        </UiDropdownMenuLabel>
+        <UiDropdownMenuItem
+          v-for="category in launchItems"
+          :key="category"
+          @click="go(category)"
+        >
+          {{ actionCn[category] || category }}
+        </UiDropdownMenuItem>
+      </template>
     </UiDropdownMenuContent>
   </UiDropdownMenu>
 </template>

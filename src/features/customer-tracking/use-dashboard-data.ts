@@ -23,9 +23,10 @@ import {
 import { ref, watch } from 'vue'
 
 import { useAxios } from '@/composables/use-axios'
-import { loadArrowDataset, loadDataset, runQuery } from '@/services/mosaic'
+import { isArrowTableLoaded, isDatasetLoaded, loadArrowDataset, loadDataset, runQuery } from '@/services/mosaic'
 
-import type { AdsAccount, AgentChat, Campaign, Organization, Profile, Schedule, SubAccount, ToolStat } from './types'
+import type { AttributionRow, FirstTouchRow } from './performance-analytics'
+import type { AdsAccount, AgentChat, Campaign, Organization, PerfProfile, PerfSchedule, Profile, Schedule, SubAccount, ToolStat } from './types'
 
 import { useFilterContext } from './filter-context'
 
@@ -50,20 +51,44 @@ export async function fetchDatasetManifest(): Promise<DatasetManifest> {
 
 async function fetchArrow(url: string): Promise<Uint8Array> {
   const { axiosInstance } = useAxios()
+  // No custom request headers here on purpose: anything outside the CORS
+  // safelist turns a simple GET into a preflighted request, and a header the API
+  // does not allow fails the preflight before the request is ever sent. Cache
+  // avoidance belongs on the response instead - see the endpoint's Cache-Control.
   const res = await axiosInstance.get<ArrayBuffer>(url, { responseType: 'arraybuffer' })
   return new Uint8Array(res.data)
 }
 
-function parseJson<T>(value: unknown): T {
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as T
-    }
-    catch {
-      return value as unknown as T
+/**
+ * POST an Arrow request whose scope is too large for a URL.
+ *
+ * The schedule charts filter by the schedules the table is showing, and an action
+ * can own thousands of them: as a query string that is ~150KB, well past any sane
+ * header limit. The body carries the scope instead.
+ */
+async function postArrow(url: string, body: Record<string, unknown>): Promise<Uint8Array> {
+  const { axiosInstance } = useAxios()
+  const res = await axiosInstance.post<ArrayBuffer>(url, body, { responseType: 'arraybuffer' })
+  return new Uint8Array(res.data)
+}
+
+/**
+ * A cheap order-independent digest of a pushed-down id list.
+ *
+ * The cache key must separate two different filters of the same size; a key built
+ * from the length and the first/last id would collide on exactly that case. FNV-1a
+ * over every character is fast enough for a few thousand ids and hashes in the
+ * browser without making the request async.
+ */
+function hashIds(ids: readonly string[]): string {
+  let hash = 0x811C9DC5
+  for (const id of ids) {
+    for (let i = 0; i < id.length; i++) {
+      hash ^= id.charCodeAt(i)
+      hash = Math.imul(hash, 0x01000193)
     }
   }
-  return value as T
+  return (hash >>> 0).toString(36)
 }
 
 // ---- Mosaic SQL query builders ----
@@ -125,6 +150,174 @@ function organizationsQuery(fromDate: string, toDate: string): Query {
     launchedSb: coalesce(col('sb_campaigns_created', 'f'), 0),
     launchedSd: coalesce(col('sd_campaigns_created', 'f'), 0),
   })
+}
+
+// ---------------------------------------------------------------------------
+// Performance page datasets (the per-page OSS export under performance/)
+// ---------------------------------------------------------------------------
+
+/**
+ * The first-touch window: seven days either side of the touch. A week is long
+ * enough for a bid or budget change to reach a meaningful number of auctions, and
+ * short enough that the "before" days still exist for a touch on the first day of
+ * even the 7-day range preset.
+ */
+export const FIRST_TOUCH_WINDOW_DAYS = 7
+
+/** L1 profiles: the dim (one row per profile x org) joined to the profile fact. */
+function performanceProfilesQuery(fromDate: string, toDate: string): Query {
+  const fact = Query.from('performance_l1_profiles_fact')
+    .select({
+      amazon_profile_id: col('amazon_profile_id'),
+      sp_ad_spend: sum(col('sp_ad_spend')),
+      sb_ad_spend: sum(col('sb_ad_spend')),
+      sd_ad_spend: sum(col('sd_ad_spend')),
+      ad_sales: sum(col('ad_sales')),
+      total_sales: sum(col('total_sales')),
+      impressions: sum(col('impressions')),
+      clicks: sum(col('clicks')),
+      ad_orders: sum(col('ad_orders')),
+      schedule_runs: sum(col('schedule_runs')),
+      optimization_events: sum(col('optimization_events')),
+      bids_optimized: sum(col('bids_optimized')),
+      budgets_optimized: sum(col('budgets_optimized')),
+      placements_optimized: sum(col('placements_optimized')),
+      sp_campaigns_created: sum(col('sp_campaigns_created')),
+      sb_campaigns_created: sum(col('sb_campaigns_created')),
+      sd_campaigns_created: sum(col('sd_campaigns_created')),
+      sp_targetings_created: sum(col('sp_targetings_created')),
+      sb_targetings_created: sum(col('sb_targetings_created')),
+      sd_targetings_created: sum(col('sd_targetings_created')),
+    })
+    .where(isBetween(col('date'), [literal(fromDate), literal(toDate)]))
+    .groupby(col('amazon_profile_id'))
+  return Query.from(
+    join(from('performance_l1_profiles_dim', 'd'), new FromClauseNode(fact, 'f'), { type: 'LEFT', on: eq(col('amazon_profile_id', 'f'), col('amazon_profile_id', 'd')) }),
+  ).select({
+    orgId: col('org_id', 'd'),
+    organization: col('org_name', 'd'),
+    amazonProfileId: col('amazon_profile_id', 'd'),
+    name: col('amazon_profile_name', 'd'),
+    entity: col('entity', 'd'),
+    marketplace: col('marketplace', 'd'),
+    // TIMESTAMPTZ -> VARCHAR: duckdb-wasm cannot cast a TIMESTAMPTZ straight to DATE.
+    connectedAt: cast(col('connected_at', 'd'), 'VARCHAR'),
+    plan: col('plan', 'd'),
+    adsApi: col('ads_api_connection', 'd'),
+    amsApi: col('ams_api_connection', 'd'),
+    spApi: col('sp_api_connection', 'd'),
+    activeSchedules: coalesce(col('active_schedules', 'd'), 0),
+    spAdSpend: coalesce(col('sp_ad_spend', 'f'), 0),
+    sbAdSpend: coalesce(col('sb_ad_spend', 'f'), 0),
+    sdAdSpend: coalesce(col('sd_ad_spend', 'f'), 0),
+    adSales: coalesce(col('ad_sales', 'f'), 0),
+    totalSales: coalesce(col('total_sales', 'f'), 0),
+    adOrders: coalesce(col('ad_orders', 'f'), 0),
+    impressions: coalesce(col('impressions', 'f'), 0),
+    clicks: coalesce(col('clicks', 'f'), 0),
+    scheduleRuns: coalesce(col('schedule_runs', 'f'), 0),
+    optimizationEvents: coalesce(col('optimization_events', 'f'), 0),
+    bidsOptimized: coalesce(col('bids_optimized', 'f'), 0),
+    budgetsOptimized: coalesce(col('budgets_optimized', 'f'), 0),
+    placementsOptimized: coalesce(col('placements_optimized', 'f'), 0),
+    spLaunched: coalesce(col('sp_campaigns_created', 'f'), 0),
+    sbLaunched: coalesce(col('sb_campaigns_created', 'f'), 0),
+    sdLaunched: coalesce(col('sd_campaigns_created', 'f'), 0),
+    spTargeting: coalesce(col('sp_targetings_created', 'f'), 0),
+    sbTargeting: coalesce(col('sb_targetings_created', 'f'), 0),
+    sdTargeting: coalesce(col('sd_targetings_created', 'f'), 0),
+  })
+}
+
+/** L2 schedules: the schedule dim joined to its per-schedule fact totals. */
+function performanceSchedulesQuery(fromDate: string, toDate: string): Query {
+  const fact = Query.from('performance_l2_schedules_fact')
+    .select({
+      schedule_id: col('schedule_id'),
+      schedule_runs: sum(col('schedule_runs')),
+      optimization_events: sum(col('optimization_events')),
+      bids_optimized: sum(col('bids_optimized')),
+      budgets_optimized: sum(col('budgets_optimized')),
+      placements_optimized: sum(col('placements_optimized')),
+      sp_campaigns_created: sum(col('sp_campaigns_created')),
+      sb_campaigns_created: sum(col('sb_campaigns_created')),
+      sd_campaigns_created: sum(col('sd_campaigns_created')),
+      sp_adgroups_created: sum(col('sp_adgroups_created')),
+      sb_adgroups_created: sum(col('sb_adgroups_created')),
+      sd_adgroups_created: sum(col('sd_adgroups_created')),
+      sp_targetings_created: sum(col('sp_targetings_created')),
+      sb_targetings_created: sum(col('sb_targetings_created')),
+      sd_targetings_created: sum(col('sd_targetings_created')),
+    })
+    .where(isBetween(col('date'), [literal(fromDate), literal(toDate)]))
+    .groupby(col('schedule_id'))
+  return Query.from(
+    join(from('performance_l2_schedules_dim', 'd'), new FromClauseNode(fact, 'f'), { type: 'LEFT', on: eq(col('schedule_id', 'f'), col('schedule_id', 'd')) }),
+  ).select({
+    scheduleId: col('schedule_id', 'd'),
+    scheduleName: col('schedule_name', 'd'),
+    actionType: col('action_type', 'd'),
+    actionCategory: col('action_category', 'd'),
+    amazonProfileId: col('amazon_profile_id', 'd'),
+    profileName: col('amazon_profile_name', 'd'),
+    subAccount: col('sub_account', 'd'),
+    status: col('status', 'd'),
+    deleted: col('is_deleted', 'd'),
+    createdDate: cast(col('created_date', 'd'), 'VARCHAR'),
+    alertEnabled: col('alert_enabled', 'd'),
+    lastRunStatus: col('last_run_status', 'd'),
+    lastRunTime: cast(col('last_run_time', 'd'), 'VARCHAR'),
+    scheduleRuns: coalesce(col('schedule_runs', 'f'), 0),
+    optimizationEvents: coalesce(col('optimization_events', 'f'), 0),
+    bidsOptimized: coalesce(col('bids_optimized', 'f'), 0),
+    budgetsOptimized: coalesce(col('budgets_optimized', 'f'), 0),
+    placementsOptimized: coalesce(col('placements_optimized', 'f'), 0),
+    spLaunched: coalesce(col('sp_campaigns_created', 'f'), 0),
+    sbLaunched: coalesce(col('sb_campaigns_created', 'f'), 0),
+    sdLaunched: coalesce(col('sd_campaigns_created', 'f'), 0),
+    spAdGroups: coalesce(col('sp_adgroups_created', 'f'), 0),
+    sbAdGroups: coalesce(col('sb_adgroups_created', 'f'), 0),
+    sdAdGroups: coalesce(col('sd_adgroups_created', 'f'), 0),
+    spTargeting: coalesce(col('sp_targetings_created', 'f'), 0),
+    sbTargeting: coalesce(col('sb_targetings_created', 'f'), 0),
+    sdTargeting: coalesce(col('sd_targetings_created', 'f'), 0),
+  })
+}
+
+/**
+ * The trend chart's rows: one row per (profile, date), for the whole page or for one
+ * profile.
+ *
+ * Deliberately not grouped by date: these rows are the finest grain the export has, so
+ * a table filter - which selects *profiles* - can be applied by re-aggregating them in
+ * the browser through `dailySeries`. A pre-aggregated sum cannot be filtered after the
+ * fact, which is exactly why the trend used to ignore the tables above it.
+ */
+function performanceDailyQuery(fromDate: string, toDate: string, profileId?: string): Query {
+  let query = Query.from('performance_l1_profiles_fact')
+    .select({
+      amazonProfileId: col('amazon_profile_id'),
+      date: cast(col('date'), 'VARCHAR'),
+      spAdSpend: col('sp_ad_spend'),
+      sbAdSpend: col('sb_ad_spend'),
+      sdAdSpend: col('sd_ad_spend'),
+      adSales: col('ad_sales'),
+      adOrders: col('ad_orders'),
+      impressions: col('impressions'),
+      clicks: col('clicks'),
+      scheduleRuns: col('schedule_runs'),
+      optimizationEvents: col('optimization_events'),
+      bidsOptimized: col('bids_optimized'),
+      budgetsOptimized: col('budgets_optimized'),
+      placementsOptimized: col('placements_optimized'),
+      spCampaignsCreated: col('sp_campaigns_created'),
+      sbCampaignsCreated: col('sb_campaigns_created'),
+      sdCampaignsCreated: col('sd_campaigns_created'),
+    })
+    .where(isBetween(col('date'), [literal(fromDate), literal(toDate)]))
+  if (profileId)
+    query = query.where(eq(col('amazon_profile_id'), literal(profileId)))
+  return query
 }
 
 function profilesQuery(fromDate: string, toDate: string): Query {
@@ -207,44 +400,53 @@ function profilesQuery(fromDate: string, toDate: string): Query {
   })
 }
 
-function campaignsQuery(fromDate: string, toDate: string): Query {
-  const fact = Query.from('campaigns_fact')
-    .select({
-      amazon_campaign_id: col('amazon_campaign_id'),
-      ad_spend: sum(col('ad_spend')),
-      ad_sales: sum(col('ad_sales')),
-      ad_orders: sum(col('ad_orders')),
-      impressions: sum(col('impressions')),
-      clicks: sum(col('clicks')),
-      optimization_events: sum(col('optimization_events')),
-      bids_optimized: sum(col('bids_optimized')),
-      budgets_optimized: sum(col('budgets_optimized')),
-      placements_optimized: sum(col('placements_optimized')),
-    })
-    .where(isBetween(col('date'), [literal(fromDate), literal(toDate)]))
-    .groupby(col('amazon_campaign_id'))
-  return Query.from(
-    join(from('campaigns_dim', 'd'), new FromClauseNode(fact, 'f'), { type: 'LEFT', on: eq(col('amazon_campaign_id', 'f'), col('amazon_campaign_id', 'd')) }),
-  ).select({
-    amazonCampaignId: col('amazon_campaign_id', 'd'),
-    amazonProfileId: col('amazon_profile_id', 'd'),
-    name: col('amazon_campaign_name', 'd'),
-    adType: col('sponsored_ads_type', 'd'),
-    managedBy: col('managed_by', 'd'),
-    affectedBy: col('affected_by', 'd'),
-    launchedBy: col('launched_by', 'd'),
-    adSpend: coalesce(col('ad_spend', 'f'), 0),
-    adSales: coalesce(col('ad_sales', 'f'), 0),
-    adOrders: coalesce(col('ad_orders', 'f'), 0),
-    impressions: coalesce(col('impressions', 'f'), 0),
-    clicks: coalesce(col('clicks', 'f'), 0),
-    acos: rate100(col('ad_spend', 'f'), col('ad_sales', 'f')),
-    cpc: cond(gt(col('clicks', 'f'), 0), div(col('ad_spend', 'f'), col('clicks', 'f')), 0),
-    cvr: rate100(col('ad_orders', 'f'), col('clicks', 'f')),
-    optimizationEvents: coalesce(col('optimization_events', 'f'), 0),
-    bidsOptimized: coalesce(col('bids_optimized', 'f'), 0),
-    budgetsOptimized: coalesce(col('budgets_optimized', 'f'), 0),
-    placementsOptimized: coalesce(col('placements_optimized', 'f'), 0),
+/**
+ * Which schedule attribution maps to which business action, per the flattened
+ * campaign view. The view stores a 0/1 flag per action, so the labels are
+ * assembled here rather than joining another table in DuckDB.
+ */
+const MANAGING_ACTIONS: [string, string][] = [
+  ['managingBidOpt', 'Bid Optimization'],
+  ['managingBudgetOpt', 'Budget Optimization'],
+  ['managingGbOpt', 'GoalBased Bid Optimization'],
+  ['managingPlacementOpt', 'Placement Optimization'],
+]
+const LAUNCHING_ACTIONS: [string, string][] = [
+  ['launchedCg', 'Campaign Generation'],
+  ['launchedCmg', 'Cyber Minigun'],
+  ['launchedKh', 'Keyword Harvesting'],
+]
+
+/**
+ * The campaign table for one profile. The backend has already aggregated the
+ * campaign x date rows into one row per campaign for the requested range, so
+ * there is nothing left to group here — only presentation fields to derive.
+ */
+function campaignsQuery(table: string): Query {
+  return Query.from(table).select({
+    amazonCampaignId: col('amazon_campaign_id'),
+    amazonProfileId: col('amazon_profile_id'),
+    name: col('amazon_campaign_name'),
+    adType: col('sponsored_ads_type'),
+    managingBidOpt: col('managing_bid_opt'),
+    managingBudgetOpt: col('managing_budget_opt'),
+    managingGbOpt: col('managing_gb_opt'),
+    managingPlacementOpt: col('managing_placement_opt'),
+    launchedCg: col('launched_cg'),
+    launchedCmg: col('launched_cmg'),
+    launchedKh: col('launched_kh'),
+    adSpend: col('ad_spend'),
+    adSales: col('ad_sales'),
+    adOrders: col('ad_orders'),
+    impressions: col('impressions'),
+    clicks: col('clicks'),
+    acos: rate100(col('ad_spend'), col('ad_sales')),
+    cpc: cond(gt(col('clicks'), 0), div(col('ad_spend'), col('clicks')), 0),
+    cvr: rate100(col('ad_orders'), col('clicks')),
+    optimizationEvents: col('optimization_events'),
+    bidsOptimized: col('bids_optimized'),
+    budgetsOptimized: col('budgets_optimized'),
+    placementsOptimized: col('placements_optimized'),
   })
 }
 
@@ -455,9 +657,21 @@ export function useDashboardData() {
   const ready = ref(false)
   const loading = ref(false)
   const campaignsLoading = ref(false)
+  const analyticsLoading = ref(false)
   const error = ref<string | null>(null)
-  const loadedOss = new Set<string>()
-  const campaignsLoadedFor = ref<string | null>(null)
+  /**
+   * What the campaign table currently holds: the request key it was fetched for and
+   * how many rows the query returned. A bare key is not enough to skip work — the
+   * in-memory rows can be gone (a fresh component) or the DuckDB relation can be
+   * missing (worker restart, hot update), and both used to render as a silently
+   * empty table while the endpoint had data.
+   */
+  const campaignsLoaded = ref<{ key: string, rows: number } | null>(null)
+  const campaignsProfileId = ref<string | null>(null)
+  // The analytics slice is keyed by action + scope + range, so a re-mount on the
+  // same URL reuses the Arrow tables instead of re-querying the lakehouse.
+  const analyticsLoadedFor = ref<string | null>(null)
+  const analyticsScope = ref<{ actionType: string, profileId?: string, scheduleIds?: string[] } | null>(null)
   const computedRefs = new Set<string>()
 
   const organizations = ref<Organization[]>([])
@@ -470,10 +684,24 @@ export function useDashboardData() {
   const agentProfileStats = ref<AgentProfileStat[]>([])
   const adsAccounts = ref<AdsAccount[]>([])
   const subAccounts = ref<SubAccount[]>([])
+  const performanceProfiles = ref<PerfProfile[]>([])
+  const performanceSchedules = ref<PerfSchedule[]>([])
+  const perfAttribution = ref<AttributionRow[]>([])
+  const perfFirstTouch = ref<FirstTouchRow[]>([])
+  /** One row per (profile, date): the finest grain behind the trend charts. */
+  const performanceDailyRows = ref<Record<string, unknown>[]>([])
+  /**
+   * The profile the daily series is scoped to. `profile` pages aggregate one
+   * profile; the page-level Performance page aggregates all of them.
+   */
+  const dailyProfileId = ref<string | null>(null)
   const launchOutput = ref<LaunchOutput[]>([])
 
   async function loadOssDatasets(names: string[]): Promise<void> {
-    const pending = names.filter(n => !loadedOss.has(n))
+    // "Already loaded" is answered by the DuckDB layer, not by this component:
+    // the tables outlive any one mount, and a remount must reuse them instead of
+    // re-registering the same files (which truncates them mid-read).
+    const pending = names.filter(n => !isDatasetLoaded(n))
     if (pending.length === 0)
       return
     const manifest = await fetchDatasetManifest()
@@ -487,12 +715,10 @@ export function useDashboardData() {
       byName.set(d.name, parts)
     }
     for (const [name, parts] of byName) {
-      await loadDataset(
-        name,
-        parts.map(p => p.url),
-        parts.map(p => `${name}__${p.key.split('/').pop() || 'part.parquet'}`),
-      )
-      loadedOss.add(name)
+      await loadDataset(name, parts.map(p => ({
+        url: p.url,
+        filename: p.key.split('/').pop() || 'part.parquet',
+      })))
     }
   }
 
@@ -519,6 +745,55 @@ export function useDashboardData() {
       adSpendSplit: { sp: Number(r.spAdSpend), sb: Number(r.sbAdSpend), sd: Number(r.sdAdSpend) },
       launched: { sp: Number(r.launchedSp), sb: Number(r.launchedSb), sd: Number(r.launchedSd) },
     }))
+  }
+
+  async function computePerformanceProfiles(): Promise<void> {
+    const rows = await runQuery<Record<string, unknown>>(
+      performanceProfilesQuery(dateRange.value.from, dateRange.value.to),
+    )
+    performanceProfiles.value = rows.map((r) => {
+      const adSpendSplit = { sp: Number(r.spAdSpend ?? 0), sb: Number(r.sbAdSpend ?? 0), sd: Number(r.sdAdSpend ?? 0) }
+      const spend = adSpendSplit.sp + adSpendSplit.sb + adSpendSplit.sd
+      const sales = Number(r.adSales ?? 0)
+      const totalSales = Number(r.totalSales ?? 0)
+      const clicks = Number(r.clicks ?? 0)
+      const orders = Number(r.adOrders ?? 0)
+      return {
+        ...(r as unknown as PerfProfile),
+        // The lakehouse hands this back as a TIMESTAMPTZ string; the calendar day is
+        // what belongs next to a profile name.
+        connectedAt: String(r.connectedAt ?? '').slice(0, 10),
+        adSpendSplit,
+        launched: { sp: Number(r.spLaunched ?? 0), sb: Number(r.sbLaunched ?? 0), sd: Number(r.sdLaunched ?? 0) },
+        targeting: { sp: Number(r.spTargeting ?? 0), sb: Number(r.sbTargeting ?? 0), sd: Number(r.sdTargeting ?? 0) },
+        acos: sales ? spend / sales * 100 : 0,
+        tacos: totalSales ? spend / totalSales * 100 : 0,
+        cpc: clicks ? spend / clicks : 0,
+        cvr: clicks ? orders / clicks * 100 : 0,
+      }
+    })
+  }
+
+  async function computePerformanceSchedules(): Promise<void> {
+    const rows = await runQuery<Record<string, unknown>>(
+      performanceSchedulesQuery(dateRange.value.from, dateRange.value.to),
+    )
+    // Deleted schedules are filtered here rather than in SQL so the whole dim
+    // stays queryable and the rule is visible in one place.
+    performanceSchedules.value = rows
+      .filter(r => r.deleted !== true)
+      .map(r => ({
+        ...(r as unknown as PerfSchedule),
+        launched: { sp: Number(r.spLaunched ?? 0), sb: Number(r.sbLaunched ?? 0), sd: Number(r.sdLaunched ?? 0) },
+        adGroups: { sp: Number(r.spAdGroups ?? 0), sb: Number(r.sbAdGroups ?? 0), sd: Number(r.sdAdGroups ?? 0) },
+        targeting: { sp: Number(r.spTargeting ?? 0), sb: Number(r.sbTargeting ?? 0), sd: Number(r.sdTargeting ?? 0) },
+      }))
+  }
+
+  async function computePerformanceDaily(): Promise<void> {
+    performanceDailyRows.value = await runQuery<Record<string, unknown>>(
+      performanceDailyQuery(dateRange.value.from, dateRange.value.to, dailyProfileId.value ?? undefined),
+    )
   }
 
   async function computeProfiles(): Promise<void> {
@@ -574,13 +849,31 @@ export function useDashboardData() {
     launchOutput.value = await runQuery<LaunchOutput>(launchOutputQuery(dateRange.value.from, dateRange.value.to))
   }
 
+  /** Labels for every attribution flag that is set on this row. */
+  function flagsToLabels(row: Record<string, unknown>, pairs: [string, string][]): string[] {
+    return pairs.filter(([flag]) => Number(row[flag]) > 0).map(([, label]) => label)
+  }
+
+  /**
+   * The DuckDB relation holding the current profile's campaigns. Naming it after the
+   * profile and range keeps every ingest a first ingest: DuckDB does not replace the
+   * rows of a relation that already exists, so a second profile reusing one fixed
+   * name would silently keep serving the previous profile's rows.
+   */
+  const campaignsTable = ref('campaigns')
+
   async function computeCampaigns(): Promise<void> {
-    const fromDate = dateRange.value.from
-    const toDate = dateRange.value.to
-    campaigns.value = (await runQuery<Record<string, unknown>>(campaignsQuery(fromDate, toDate))).map(r => ({
+    campaigns.value = (await runQuery<Record<string, unknown>>(campaignsQuery(campaignsTable.value))).map(r => ({
       ...(r as unknown as Campaign),
-      managedBy: parseJson<Campaign['managedBy']>(r.managedBy),
-      affectedBy: parseJson<Campaign['affectedBy']>(r.affectedBy),
+      managedBy: flagsToLabels(r, MANAGING_ACTIONS),
+      // "affected" means the campaign actually received that optimisation, which
+      // the counter columns record independently of the schedule attribution.
+      affectedBy: [
+        Number(r.bidsOptimized) > 0 ? 'Bid Optimization' : '',
+        Number(r.budgetsOptimized) > 0 ? 'Budget Optimization' : '',
+        Number(r.placementsOptimized) > 0 ? 'Placement Optimization' : '',
+      ].filter(Boolean),
+      launchedBy: flagsToLabels(r, LAUNCHING_ACTIONS)[0] ?? '',
     }))
   }
 
@@ -589,27 +882,147 @@ export function useDashboardData() {
    * and load them into DuckDB. Called only when the user drills into a profile's
    * campaign table or the profile+action analytics page — never on first load.
    */
-  async function loadCampaigns(profileId?: string): Promise<void> {
-    const cacheKey = profileId ?? '*'
-    if (campaignsLoadedFor.value === cacheKey)
+  async function loadCampaigns(profileId?: string, force = false): Promise<void> {
+    // The all-profile campaign fact is ~19.0M rows over the 60-day window
+    // (19,040,438 rows across 916 profiles, measured 2026-09-14). Ingesting that
+    // into DuckDB-Wasm is not viable, so the unscoped fetch is refused outright
+    // instead of being attempted and hanging the page.
+    if (!profileId)
       return
+    const fromDate = dateRange.value.from
+    const toDate = dateRange.value.to
+    // The response is a server-side aggregate for one (profile, range), so the
+    // range is part of the cache key: widening the dates must refetch.
+    const cacheKey = `${profileId}|${fromDate}|${toDate}`
+    const table = `campaigns_${[profileId, fromDate, toDate].join('_').replace(/[^A-Z0-9]/gi, '_')}`
+    campaignsProfileId.value = profileId
+    // Skip only when every precondition still holds: the same request was loaded,
+    // its rows are still in memory (a legitimate empty result is remembered too,
+    // so it does not refetch on every visit) and the DuckDB relation is present.
+    const settled = campaignsLoaded.value
+    if (!force && settled?.key === cacheKey && settled.rows === campaigns.value.length && isArrowTableLoaded(table))
+      return
+    // The scope's table outlives this component, so a second visit needs no request
+    // at all. A failure at this point would only report a problem with data the page
+    // already has, so the request is skipped while the relation is present.
+    if (!force && isArrowTableLoaded(table)) {
+      try {
+        campaignsTable.value = table
+        await computeCampaigns()
+        campaignsLoaded.value = { key: cacheKey, rows: campaigns.value.length }
+        error.value = null
+        return
+      }
+      catch {
+        // The relation went away between the check and the query (recycled, or the
+        // worker restarted): fall through and fetch it again.
+      }
+    }
     campaignsLoading.value = true
+    let failed: unknown = null
+    for (const attempt of [0, 1]) {
+      try {
+        // Retry once with a cache-buster (the backend keys its own cache on the
+        // profile and range, so the retry is still a hit server-side). Two
+        // environment-shaped problems - a cached/evicted body and a transient ingest
+        // failure - both used to reach the reader as an empty table that only a
+        // manual reload fixed. The app now performs that reload itself.
+        const params = new URLSearchParams({ amazon_profile_id: profileId, from: fromDate, to: toDate })
+        if (attempt > 0)
+          params.set('_', String(Date.now()))
+        const bytes = await fetchArrow(`/customer-tracking/performance/campaigns?${params.toString()}`)
+        if (!isArrowTableLoaded(table))
+          await loadArrowDataset(table, bytes)
+        campaignsTable.value = table
+        await computeCampaigns()
+        failed = null
+        if (campaigns.value.length > 0 || attempt > 0)
+          break
+      }
+      catch (e) {
+        failed = e
+      }
+    }
+    if (failed) {
+      // Leave the key unset so the next visit retries instead of trusting a
+      // half-loaded table.
+      campaignsLoaded.value = null
+      error.value = failed instanceof Error ? failed.message : String(failed)
+    }
+    else {
+      campaignsLoaded.value = { key: cacheKey, rows: campaigns.value.length }
+      error.value = null
+    }
+    campaignsLoading.value = false
+  }
+
+  /**
+   * Load the two server aggregates behind the schedule page: how the account's
+   * spend splits between campaigns this action touched, campaigns other schedules
+   * touched, and untouched campaigns, plus each touched campaign's before/after
+   * comparison around its first touch.
+   *
+   * Both read a ~20M row campaign view, so ClickZetta aggregates them and ships
+   * Arrow; the browser only ever holds the (small) result.
+   */
+  async function loadScheduleAnalytics(actionType: string, profileId?: string, scheduleIds?: string[]): Promise<void> {
+    if (!actionType)
+      return
+    const fromDate = dateRange.value.from
+    const toDate = dateRange.value.to
+    analyticsScope.value = { actionType, profileId, scheduleIds }
+    // `undefined` is "no filter" and an empty array is "the filter kept nothing";
+    // the two must not share a cache key just because both look empty.
+    const scopeKey = scheduleIds === undefined ? 'all' : `n${scheduleIds.length}:${hashIds(scheduleIds)}`
+    // A valid identifier for the scope's own table: same scope, same table, so a
+    // re-entry still reuses what is already in DuckDB.
+    const scopeSuffix = scopeKey.replace(/[^A-Z0-9]/gi, '_')
+    const cacheKey = `${actionType}|${profileId ?? 'all'}|${fromDate}|${toDate}|${scopeKey}`
+    if (analyticsLoadedFor.value === cacheKey)
+      return
+    // No profile scope means the whole tracked book of business, which is the same
+    // population the L1 tables aggregate.
+    const body: Record<string, unknown> = { action_type: actionType, from: fromDate, to: toDate }
+    if (profileId)
+      body.amazon_profile_ids = [profileId]
+    if (scheduleIds !== undefined)
+      body.schedule_ids = scheduleIds
+    analyticsLoading.value = true
     try {
-      const query = profileId ? `?amazon_profile_id=${encodeURIComponent(profileId)}` : ''
-      const [campaignFact, campaignDim] = await Promise.all([
-        fetchArrow(`/customer-tracking/campaigns/fact${query}`),
-        fetchArrow(`/customer-tracking/campaigns/dim${query}`),
+      const [attribution, firstTouch] = await Promise.all([
+        postArrow('/customer-tracking/performance/attribution', body),
+        postArrow('/customer-tracking/performance/first-touch', { ...body, window_days: FIRST_TOUCH_WINDOW_DAYS }),
       ])
-      await loadArrowDataset('campaigns_fact', campaignFact)
-      await loadArrowDataset('campaigns_dim', campaignDim)
-      campaignsLoadedFor.value = cacheKey
-      await computeCampaigns()
+      // One physical table per filter scope, rather than replacing a shared
+      // \`perf_attribution\`.
+      //
+      // Re-using one name means every refresh depends on how DuckDB treats an Arrow
+      // ingest into an existing relation, and the browser kept serving the previous
+      // rows: the charts stayed on the unfiltered aggregate while the request that
+      // carried the filter came back with the right bytes. A name derived from the
+      // scope cannot collide, so an ingest is always a first ingest into a new table.
+      const attributionTable = `perf_attribution_${scopeSuffix}`
+      const firstTouchTable = `perf_first_touch_${scopeSuffix}`
+      // A scope's table outlives this component: coming back to a scope must reuse
+      // it, both to avoid re-downloading and because re-ingesting into an existing
+      // relation is the one path that behaved inconsistently.
+      if (!isArrowTableLoaded(attributionTable))
+        await loadArrowDataset(attributionTable, attribution)
+      if (!isArrowTableLoaded(firstTouchTable))
+        await loadArrowDataset(firstTouchTable, firstTouch)
+      const [attributionRows, firstTouchRows] = await Promise.all([
+        runQuery<AttributionRow>(`SELECT * FROM "${attributionTable}"`),
+        runQuery<FirstTouchRow>(`SELECT * FROM "${firstTouchTable}"`),
+      ])
+      perfAttribution.value = attributionRows
+      perfFirstTouch.value = firstTouchRows
+      analyticsLoadedFor.value = cacheKey
     }
     catch (e) {
       error.value = e instanceof Error ? e.message : String(e)
     }
     finally {
-      campaignsLoading.value = false
+      analyticsLoading.value = false
     }
   }
 
@@ -618,6 +1031,9 @@ export function useDashboardData() {
     accountProfiles: { datasets: ['accounts_l2_profiles'], compute: computeAccountProfiles },
     profiles: { datasets: ['profiles', 'ad_performance', 'schedule_events', 'profile_daily'], compute: computeProfiles },
     schedules: { datasets: ['schedules', 'schedule_events'], compute: computeSchedules },
+    performanceProfiles: { datasets: ['performance_l1_profiles_dim', 'performance_l1_profiles_fact'], compute: computePerformanceProfiles },
+    performanceSchedules: { datasets: ['performance_l2_schedules_dim', 'performance_l2_schedules_fact'], compute: computePerformanceSchedules },
+    performanceDailyRows: { datasets: ['performance_l1_profiles_fact'], compute: computePerformanceDaily },
     toolStats: { datasets: ['agent_events'], compute: computeToolStats },
     agentChats: { datasets: ['agent_chats'], compute: computeAgentChats },
     agentProfileStats: { datasets: ['profiles', 'agent_events', 'profile_daily'], compute: computeAgentProfileStats },
@@ -629,9 +1045,18 @@ export function useDashboardData() {
   const PAGE_REFS: Record<string, string[]> = {
     'accounts': ['organizations'],
     'account-detail': ['organizations', 'accountProfiles', 'adsAccounts', 'subAccounts'],
-    'performance': ['profiles'],
-    'profile': ['profiles', 'campaigns'],
-    'schedules': ['profiles', 'schedules', 'campaigns', 'launchOutput'],
+    // 'schedules' feeds the Performance page's Schedules tab (the action_type
+    // roll-up). Without it schedules.value stays empty and that tab renders no
+    // rows, which also makes the L2 drill-down unreachable.
+    'performance': ['performanceProfiles', 'performanceSchedules', 'performanceDailyRows'],
+    // Every Performance page reads its identity from the page-level export: the
+    // legacy 'profiles' dataset ships a different id set, so using it here made a
+    // profile opened from the L1 table resolve to the wrong row (and, in turn, to
+    // an empty campaign table).
+    'profile': ['performanceProfiles', 'performanceDailyRows', 'campaigns'],
+    // The L2 schedule page keeps its own schedule rows (one per schedule) and pulls
+    // the campaign-grain aggregates separately, keyed by action + profile scope.
+    'schedules': ['performanceProfiles', 'performanceSchedules'],
     'agent': ['agentProfileStats', 'toolStats', 'agentChats'],
     'agent-profile': ['agentProfileStats', 'agentChats', 'profiles'],
     'tool-profiles': ['toolStats', 'profiles'],
@@ -641,6 +1066,7 @@ export function useDashboardData() {
     const refNames = PAGE_REFS[page] || []
     if (refNames.length === 0)
       return
+    dailyProfileId.value = page === 'profile' ? profileId ?? null : null
     ready.value = false
     loading.value = true
     error.value = null
@@ -671,7 +1097,7 @@ export function useDashboardData() {
     finally {
       loading.value = false
     }
-    if (refNames.includes('campaigns') && campaignsLoadedFor.value !== (profileId ?? '*'))
+    if (refNames.includes('campaigns'))
       void loadCampaigns(profileId)
   }
 
@@ -680,9 +1106,12 @@ export function useDashboardData() {
       return
     for (const rn of computedRefs)
       REFS[rn].compute()
-    if (campaignsLoadedFor.value !== null)
-      computeCampaigns()
+    // A range change invalidates the aggregate, so refetch rather than recompute.
+    if (campaignsLoaded.value !== null)
+      void loadCampaigns(campaignsProfileId.value ?? undefined)
+    if (analyticsLoadedFor.value !== null && analyticsScope.value)
+      void loadScheduleAnalytics(analyticsScope.value.actionType, analyticsScope.value.profileId, analyticsScope.value.scheduleIds)
   }, { deep: true })
 
-  return { ready, loading, campaignsLoading, error, loadPage, organizations, profiles, accountProfilesData, campaigns, schedules, toolStats, agentChats, agentProfileStats, adsAccounts, subAccounts, launchOutput }
+  return { ready, loading, campaignsLoading, analyticsLoading, error, loadPage, loadCampaigns, loadScheduleAnalytics, performanceProfiles, performanceSchedules, performanceDailyRows, perfAttribution, perfFirstTouch, organizations, profiles, accountProfilesData, campaigns, schedules, toolStats, agentChats, agentProfileStats, adsAccounts, subAccounts, launchOutput }
 }

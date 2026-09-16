@@ -3,7 +3,9 @@ import type { AgentChat, Campaign, Organization, Profile, Schedule, ToolStat } f
 export const tools = ['update_bids', 'get_campaign_metrics', 'create_campaign', 'harvest_keywords', 'analyze_acos', 'budget_report', 'pause_entities', 'search_terms']
 export const optActions = ['Bid Optimization', 'Budget Optimization', 'Placement Optimization', 'Budget Dayparting', 'Goal-Based Optimization']
 export const launchActions = ['Keyword Harvesting', 'Campaign Generation', 'Cyber Minigun']
-export const actionCn: Record<string, string> = { 'Bid Optimization': '竞价优化', 'Budget Optimization': '预算优化', 'Placement Optimization': '版位优化', 'Budget Dayparting': '预算分时', 'Goal-Based Optimization': '目标优化', 'Keyword Harvesting': '关键词收割', 'Campaign Generation': '广告活动生成', 'Cyber Minigun': 'Cyber Minigun' }
+// The label map moved to performance-analytics (charts read it too) and stays
+// re-exported here so the breadcrumbs and the action cell keep their import.
+export { actionCn } from './performance-analytics'
 
 const split = (i: number) => ({ sp: 40 + i * 3, sb: 18 + i * 2, sd: 9 + i })
 export const organizations: Organization[] = Array.from({ length: 14 }, (_, i) => ({ orgId: `org-${i + 1}`, name: ['Anotion Labs', 'Nimbus Commerce', 'Peak Goods', 'Northstar Retail'][i % 4] + (i > 3 ? ` ${i + 1}` : ''), plan: ['Enterprise', 'Growth', 'Starter'][i % 3], status: (['Healthy', 'Moderate', 'At Risk', 'Churned'][i % 4]) as Organization['status'], joined: `202${i % 4}-0${(i % 8) + 1}-12`, lastActive: `${i + 1} days ago`, renewal: `2026-${String((i % 9) + 1).padStart(2, '0')}-2${i % 8}`, adsConn: [i % 3 + 1, 3], profConn: [i % 2 + 1, 2], subConn: [2 + (i % 3), 4], ams: [i % 4, 4], sp: [i % 3, 4], adSpend: 18000 + i * 2370, adSpendSplit: split(i), chats: 120 + i * 13, optimizationEvents: 40 + i * 9, scheduleRuns: 80 + i * 11, launched: { sp: i % 4, sb: (i + 1) % 3, sd: i % 2 } }))

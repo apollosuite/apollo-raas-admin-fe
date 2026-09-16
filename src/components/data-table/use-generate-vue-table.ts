@@ -1,6 +1,7 @@
-import type { ColumnFiltersState, ColumnPinningState, PaginationState, SortingState, TableOptionsWithReactiveData, VisibilityState } from '@tanstack/vue-table'
+import type { ColumnFiltersState, ColumnPinningState, ColumnSizingState, PaginationState, SortingState, TableOptionsWithReactiveData, VisibilityState } from '@tanstack/vue-table'
 
 import { getCoreRowModel, getFacetedRowModel, getFacetedUniqueValues, getFilteredRowModel, getPaginationRowModel, getSortedRowModel, useVueTable } from '@tanstack/vue-table'
+import { toValue } from 'vue'
 
 import { DEFAULT_PAGE_SIZE } from '@/constants/pagination'
 import { valueUpdater } from '@/lib/utils'
@@ -8,10 +9,14 @@ import { valueUpdater } from '@/lib/utils'
 import type { DataTableProps } from './types'
 
 export function generateVueTable<T>(props: DataTableProps<T>) {
-  const sorting = ref<SortingState>([])
+  const sorting = ref<SortingState>(props.initialSorting ?? [])
   const columnFilters = ref<ColumnFiltersState>([])
   const columnVisibility = ref<VisibilityState>({})
   const columnPinning = ref<ColumnPinningState>(props.initialPinning ?? { left: [], right: [] })
+  // Per-table column widths, seeded from each column's own `size`. Because the
+  // table instance is created once (see the data-prop docs), a dragged width
+  // survives filtering, sorting and page changes.
+  const columnSizing = ref<ColumnSizingState>({})
   const rowSelection = ref({})
   const pagination = ref<PaginationState>({
     pageIndex: 0,
@@ -42,13 +47,14 @@ export function generateVueTable<T>(props: DataTableProps<T>) {
   })
 
   const tableConfig: TableOptionsWithReactiveData<T> = {
-    get data() { return props.data },
+    get data() { return toValue(props.data) },
     get columns() { return props.columns },
     state: {
       get sorting() { return sorting.value },
       get columnFilters() { return columnFilters.value },
       get columnVisibility() { return columnVisibility.value },
       get columnPinning() { return columnPinning.value },
+      get columnSizing() { return columnSizing.value },
       get rowSelection() { return rowSelection.value },
       get pagination() {
         if (useServerPagination) {
@@ -65,6 +71,7 @@ export function generateVueTable<T>(props: DataTableProps<T>) {
     onColumnFiltersChange: updaterOrValue => valueUpdater(updaterOrValue, columnFilters),
     onColumnVisibilityChange: updaterOrValue => valueUpdater(updaterOrValue, columnVisibility),
     onColumnPinningChange: updaterOrValue => valueUpdater(updaterOrValue, columnPinning),
+    onColumnSizingChange: updaterOrValue => valueUpdater(updaterOrValue, columnSizing),
     onRowSelectionChange: updaterOrValue => valueUpdater(updaterOrValue, rowSelection),
     onPaginationChange: updaterOrValue => valueUpdater(updaterOrValue, pagination),
     getCoreRowModel: getCoreRowModel(),
@@ -73,6 +80,10 @@ export function generateVueTable<T>(props: DataTableProps<T>) {
     getSortedRowModel: getSortedRowModel(),
     getFacetedRowModel: getFacetedRowModel(),
     getFacetedUniqueValues: getFacetedUniqueValues(),
+    enableColumnResizing: true,
+    columnResizeMode: 'onChange',
+    // Bounds for columns that do not declare their own (e.g. the actions column).
+    defaultColumn: { size: 150, minSize: 72, maxSize: 640 },
   }
 
   if (useServerPagination) {

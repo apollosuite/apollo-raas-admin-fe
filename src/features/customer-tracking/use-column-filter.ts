@@ -1,45 +1,55 @@
 import type { MaybeRefOrGetter } from 'vue'
 
-import { computed, ref, toValue } from 'vue'
+import { computed, ref, toValue, watch } from 'vue'
 
-import type { ColumnFilter } from './types'
+import type { ColumnFilter, ColumnSpec } from './types'
 
-/**
- * Convert a raw cell value into a searchable string so a text "contains" filter
- * works uniformly across strings, numbers, booleans, arrays and objects.
- */
-export function cellText(row: unknown, key: string): string {
-  const v = (row as Record<string, unknown>)[key]
-  if (v === null || v === undefined)
-    return ''
-  if (Array.isArray(v))
-    return v.map(item => (typeof item === 'object' ? JSON.stringify(item) : String(item))).join(' ')
-  if (typeof v === 'object')
-    return JSON.stringify(v)
-  return String(v)
-}
+import { isActiveFilter, matchFilter, operatorsFor } from './filter-predicates'
 
 /**
- * Apply a list of `ColumnFilter`s to `rows`. Every non-empty filter narrows the
- * result by a case-insensitive substring match on that column's cell text.
+ * Apply a list of `ColumnFilter`s to `rows`. Conditions on different columns are
+ * ANDed; a multi-select enum condition is ORed inside itself, which is what
+ * "is any of" reads as.
  */
-export function applyColumnFilters<T>(rows: T[], filters: ColumnFilter[]): T[] {
-  let result = rows
-  for (const f of filters) {
-    const needle = f.value.trim().toLowerCase()
-    if (!needle)
-      continue
-    result = result.filter(row => cellText(row, f.key).toLowerCase().includes(needle))
-  }
-  return result
+export function applyColumnFilters<T>(rows: T[], filters: ColumnFilter[], specs: readonly ColumnSpec[]): T[] {
+  const active = filters.filter(isActiveFilter)
+  if (active.length === 0)
+    return rows
+  const byKey = new Map(specs.map(spec => [spec[0], spec]))
+  return rows.filter((row) => {
+    const record = row as unknown as Record<string, any>
+    return active.every((filter) => {
+      const spec = byKey.get(filter.key)
+      // A filter whose column no longer exists (e.g. a table that swapped specs)
+      // must not empty the table.
+      return spec ? matchFilter(record, spec, filter) : true
+    })
+  })
 }
 
 /**
  * Reactive column-filter state for one table. Returns a writable `filters` ref
- * (for the filter bar's `v-model`) and a `filtered` computed (for `v-for`).
+ * (for the toolbar's `v-model`) and a `filtered` computed (for `v-for`).
+ *
+ * `specs` may be reactive: some tables swap their column set by route (the schedule
+ * table shows optimisation columns on an optimisation action and creation columns on
+ * a launch action). A filter whose column is no longer present is dropped, because it
+ * would otherwise keep narrowing the rows while the toolbar can only render it as a
+ * bare column key.
  */
-export function useColumnFilters<T>(source: MaybeRefOrGetter<T[]>) {
+export function useColumnFilters<T>(
+  source: MaybeRefOrGetter<T[]>,
+  specs: MaybeRefOrGetter<readonly ColumnSpec[]>,
+) {
   const filters = ref<ColumnFilter[]>([])
-  const filtered = computed(() => applyColumnFilters(toValue(source), filters.value))
+  watch(() => toValue(specs), (current) => {
+    const keys = new Set(current.map(spec => spec[0]))
+    const kept = filters.value.filter(filter => keys.has(filter.key))
+    if (kept.length !== filters.value.length)
+      filters.value = kept
+  })
+  const filtered = computed(() => applyColumnFilters(toValue(source), filters.value, toValue(specs)))
   return { filters, filtered }
 }
+
+export { operatorsFor }

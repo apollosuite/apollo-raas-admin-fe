@@ -54,15 +54,91 @@ use([PieChart, BarChart, FunnelChart, GraphicComponent, GridComponent, LegendCom
 
 const chartEl = ref<HTMLElement>()
 let chart: echarts.ECharts | undefined
-const total = computed(() => props.data.reduce((n, d) => n + d.value, 0))
+/**
+ * The slices the legend has switched off.
+ *
+ * ECharts hides a deselected slice on its own, but the centre label is a graphic
+ * element it knows nothing about: the total used to keep reporting all three segments
+ * while only two were on screen. Tracking the selection here is what lets the label
+ * follow the ring.
+ */
+const hidden = ref<Set<string>>(new Set())
+const total = computed(() => props.data.reduce((n, d) => n + (hidden.value.has(d.name) ? 0 : d.value), 0))
+/** Is the legend handler already attached to this chart instance? */
+let legendBound = false
+
+/**
+ * The centre label: the total of the slices still on screen, sized to fit the hole.
+ *
+ * The hole is 42% of the smaller side wide (radius percentages are relative to half of
+ * it), so the label has to be sized to that circle rather than to a fixed 20px - a long
+ * total like "$193.6M" used to run under the ring.
+ */
+function centreGraphic() {
+  const { foreground } = chartTokens()
+  const instance = chart
+  if (!instance)
+    return { id: 'centre-total', type: 'text' as const, style: { text: '' } }
+  const hole = Math.min(instance.getWidth(), instance.getHeight()) * 0.42
+  const label = formatValue(total.value)
+  // Leave ~18% of the hole as breathing room: the ring's inner stroke eats a couple
+  // of pixels and a viewer's font (Edge/Segoe vs the bundled Chromium) is a little
+  // wider than the measure, so sizing to the hole exactly still looked cramped.
+  const fontSize = fitFontSize(
+    textWidthPerPoint(label, CENTER_FONT_SIZE, CENTER_FONT_FAMILY, CENTER_FONT_WEIGHT),
+    hole * 0.82,
+  )
+  return {
+    id: 'centre-total',
+    type: 'text' as const,
+    left: 'center',
+    // A graphic element's `y` is its box top, not the text centre, so centring on the
+    // hole means subtracting the measured offset. (`top: '42%'` alone put the label
+    // below the middle of the ring; a 1.2em line box put it above.)
+    y: instance.getHeight() * 0.42 - fontSize * CENTER_TEXT_CENTRE_RATIO,
+    // Graphic elements are painted below the series by default, so the ring used to
+    // cover the middle of the total. `z` orders it above the pie inside the same
+    // layer; `zlevel` would work too but gives every chart an extra canvas layer,
+    // which doubles the canvas count on a page full of donuts.
+    z: 10,
+    style: {
+      text: label,
+      textAlign: 'center',
+      fill: foreground,
+      fontSize,
+      fontWeight: CENTER_FONT_WEIGHT,
+      fontFamily: CENTER_FONT_FAMILY,
+    },
+  }
+}
+
+/**
+ * The canvas is an image to a screen reader and the ring's numbers live inside it, so
+ * the donut's label carries the total the centre prints - which is also what makes the
+ * legend toggle observable from outside. The other shapes keep the plain title: a bar
+ * chart's categories are not a total of anything.
+ */
+const ariaLabel = computed(() => props.type ? props.title : `${props.title} · 合计 ${formatValue(total.value)}`)
 
 function render() {
   if (!chartEl.value)
     return
   chart ||= echarts.init(chartEl.value)
   const { palette, muted, foreground, background, border } = chartTokens()
+  // One handler for the life of this instance: `render` runs on every data change and
+  // a handler registered inside it would stack up.
+  if (!legendBound) {
+    legendBound = true
+    chart.on('legendselectchanged', (params: any) => {
+      hidden.value = new Set(Object.entries(params.selected ?? {}).filter(([, on]) => !on).map(([name]) => name))
+      // Only the label changes: the ring is already correct, and re-issuing the whole
+      // option from here would fight the legend's own state.
+      chart?.setOption({ graphic: [centreGraphic()] })
+    })
+  }
 
   let option: any
+  let donut = false
 
   if (props.type === 'funnel') {
     option = {
@@ -145,19 +221,7 @@ function render() {
     }
   }
   else {
-    // The hole is 42% of the smaller side wide (radius percentages are relative to
-    // half of it), so the label has to be sized to fit that circle rather than to a
-    // fixed 20px - a long total like "$193.6M" used to run under the ring.
-    const hole = Math.min(chart.getWidth(), chart.getHeight()) * 0.42
-    const centreY = chart.getHeight() * 0.42
-    const label = formatValue(total.value)
-    // Leave ~18% of the hole as breathing room: the ring's inner stroke eats a couple
-    // of pixels and a viewer's font (Edge/Segoe vs the bundled Chromium) is a little
-    // wider than the measure, so sizing to the hole exactly still looked cramped.
-    const fontSize = fitFontSize(
-      textWidthPerPoint(label, CENTER_FONT_SIZE, CENTER_FONT_FAMILY, CENTER_FONT_WEIGHT),
-      hole * 0.82,
-    )
+    donut = true
     option = {
       color: palette,
       tooltip: { trigger: 'item', formatter: (p: any) => `${p.name}：${formatValue(p.value)}（${p.percent}%）` },
@@ -174,31 +238,20 @@ function render() {
         emphasis: { label: { show: true, fontSize: 12, fontWeight: 'bold', color: foreground } },
         data: props.data,
       }],
-      graphic: [{
-        type: 'text',
-        left: 'center',
-        // A graphic element's `y` is its box top, not the text centre, so centring on
-        // the hole means subtracting the measured offset. (`top: '42%'` alone put the
-        // label below the middle of the ring; a 1.2em line box put it above.)
-        y: centreY - fontSize * CENTER_TEXT_CENTRE_RATIO,
-        // Graphic elements are painted below the series by default, so the ring used
-        // to cover the middle of the total. `z` orders it above the pie inside the
-        // same layer; `zlevel` would work too but gives every chart an extra canvas
-        // layer, which doubles the canvas count on a page full of donuts.
-        z: 10,
-        style: {
-          text: label,
-          textAlign: 'center',
-          fill: foreground,
-          fontSize,
-          fontWeight: CENTER_FONT_WEIGHT,
-          fontFamily: CENTER_FONT_FAMILY,
-        },
-      }],
+      graphic: [centreGraphic()],
     }
   }
 
   chart.setOption(option)
+  if (!donut)
+    return
+  // The legend owns the selection. Reading it back after every render keeps the centre
+  // total equal to what the ring actually shows, including when ECharts reset the
+  // selection with this option; the label is then drawn from that same state.
+  const legend = (chart.getOption() as { legend?: { selected?: Record<string, boolean> }[] } | undefined)?.legend?.[0]
+  if (legend?.selected)
+    hidden.value = new Set(Object.entries(legend.selected).filter(([, on]) => !on).map(([name]) => name))
+  chart.setOption({ graphic: [centreGraphic()] })
 }
 
 function resize() {
@@ -224,6 +277,6 @@ onBeforeUnmount(() => {
     <p class="text-sm font-medium">
       {{ title }}
     </p>
-    <div ref="chartEl" class="w-full" :class="heightClass ?? 'h-44'" role="img" :aria-label="title" />
+    <div ref="chartEl" class="w-full" :class="heightClass ?? 'h-44'" role="img" :aria-label="ariaLabel" />
   </div>
 </template>

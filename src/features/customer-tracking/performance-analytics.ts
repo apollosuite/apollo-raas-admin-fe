@@ -15,6 +15,8 @@
 
 import type { PerfDailyPoint, PerfSchedule, Split } from './types'
 
+import { LAUNCH_CATEGORY, OPTIMIZATION_CATEGORY } from './types'
+
 export type AttributionSegment = 'this_action' | 'other_actions' | 'untouched'
 export type CompositionMetric = 'ad_spend' | 'ad_sales' | 'ad_orders' | 'impressions' | 'clicks' | 'campaigns'
 
@@ -60,15 +62,63 @@ export const COMPOSITION_METRICS: readonly { key: CompositionMetric, label: stri
 const SEGMENT_ORDER: readonly AttributionSegment[] = ['this_action', 'other_actions', 'untouched']
 
 /**
- * Internal vocabulary: a campaign is either managed by one of our schedules or it
- * is unmanaged. The three segments are the two managed cases plus the baseline,
- * not a different taxonomy.
+ * What the three attribution segments are called on one action category's page.
+ *
+ * The buckets are the same three everywhere - the campaigns this action touched, the
+ * campaigns another schedule touched, and the rest of the account - but the question
+ * they answer is not. An *optimisation* action manages campaigns that already exist,
+ * so "managed / unmanaged" is the honest reading. A *campaign launch* action never
+ * manages anything: it creates, so the same row of the same view reads as created
+ * here, created by another feature, and created outside Hanna. Calling a launched
+ * campaign "managed" would claim work nobody did.
  */
-export const SEGMENT_LABEL: Record<AttributionSegment, string> = {
-  this_action: '本功能管理',
-  other_actions: '其他功能管理',
-  untouched: '未管理',
+export interface SegmentVocabulary {
+  thisAction: string
+  otherActions: string
+  untouched: string
+  /** Shorter forms for the count line under a bar, where the room is a third of a card. */
+  thisActionShort: string
+  untouchedShort: string
+  /** How the composition caption names the part: "6.1% <phrase>（…）". */
+  sharePhrase: string
 }
+
+const MANAGED_SEGMENTS: SegmentVocabulary = {
+  thisAction: '本功能管理',
+  otherActions: '其他功能管理',
+  untouched: '未管理',
+  thisActionShort: '已管理',
+  untouchedShort: '未管理',
+  sharePhrase: '来自本功能管理的广告活动',
+}
+
+const CREATED_SEGMENTS: SegmentVocabulary = {
+  thisAction: '由本功能创建',
+  otherActions: '由其它功能创建',
+  untouched: '在 Hanna 之外创建',
+  thisActionShort: '本功能创建',
+  untouchedShort: 'Hanna 外创建',
+  sharePhrase: '由本功能创建',
+}
+
+/** The segment names for one action category; an unknown category keeps the managed ones. */
+export function segmentVocabulary(actionCategory?: string): SegmentVocabulary {
+  return actionCategory === LAUNCH_CATEGORY ? CREATED_SEGMENTS : MANAGED_SEGMENTS
+}
+
+/** The managed segment names, which are also the default for an unknown category. */
+export const SEGMENT_LABEL: Record<AttributionSegment, string> = {
+  this_action: MANAGED_SEGMENTS.thisAction,
+  other_actions: MANAGED_SEGMENTS.otherActions,
+  untouched: MANAGED_SEGMENTS.untouched,
+}
+
+/** Which field of a vocabulary a segment reads from. */
+const SEGMENT_KEY = {
+  this_action: 'thisAction',
+  other_actions: 'otherActions',
+  untouched: 'untouched',
+} as const satisfies Record<AttributionSegment, keyof SegmentVocabulary>
 
 function num(value: unknown): number {
   const n = Number(value)
@@ -127,10 +177,10 @@ export function segmentTotals(rows: readonly AttributionRow[], metric: Compositi
 }
 
 /** Donut data for one metric, in business order, with empty slices dropped. */
-export function compositionSeries(rows: readonly AttributionRow[], metric: CompositionMetric): { name: string, value: number }[] {
+export function compositionSeries(rows: readonly AttributionRow[], metric: CompositionMetric, segments: SegmentVocabulary = MANAGED_SEGMENTS): { name: string, value: number }[] {
   const totals = segmentTotals(rows, metric)
   return SEGMENT_ORDER
-    .map(segment => ({ name: SEGMENT_LABEL[segment], value: totals[segment] }))
+    .map(segment => ({ name: segments[SEGMENT_KEY[segment]], value: totals[segment] }))
     .filter(slice => slice.value > 0)
 }
 
@@ -174,7 +224,7 @@ export interface EfficiencyTable {
  * "our segment is not cheaper per dollar of sales" - the value story is the
  * within-campaign before/after comparison, not this cross-section.
  */
-export function efficiencyByAdProduct(rows: readonly AttributionRow[]): EfficiencyTable {
+export function efficiencyByAdProduct(rows: readonly AttributionRow[], segments: SegmentVocabulary = MANAGED_SEGMENTS): EfficiencyTable {
   const products = ['SP', 'SB', 'SD']
   const acc = new Map<string, { spend: number, sales: number, campaigns: number }>()
   for (const row of rows) {
@@ -201,8 +251,8 @@ export function efficiencyByAdProduct(rows: readonly AttributionRow[]): Efficien
   const count = (product: string, segment: AttributionSegment) => acc.get(`${product}|${segment}`)?.campaigns ?? 0
 
   return {
-    categories: used.map(product => `${product}\n已管理 ${count(product, 'this_action').toLocaleString('en-US')} · 未管理 ${count(product, 'untouched').toLocaleString('en-US')}`),
-    series: SEGMENT_ORDER.map(segment => ({ name: SEGMENT_LABEL[segment], values: used.map(product => acos(product, segment)) })),
+    categories: used.map(product => `${product}\n${segments.thisActionShort} ${count(product, 'this_action').toLocaleString('en-US')} · ${segments.untouchedShort} ${count(product, 'untouched').toLocaleString('en-US')}`),
+    series: SEGMENT_ORDER.map(segment => ({ name: segments[SEGMENT_KEY[segment]], values: used.map(product => acos(product, segment)) })),
     counts: used.map(product => ({ this_action: count(product, 'this_action'), other_actions: count(product, 'other_actions'), untouched: count(product, 'untouched') })),
     empty: used.length === 0,
   }
@@ -302,14 +352,30 @@ export interface ActivityCounter {
 }
 
 /**
+ * The counters an action category can produce.
+ *
+ * The two families are disjoint: a launch schedule creates campaigns, ad groups and
+ * targetings and never optimises anything, an optimisation schedule changes bids,
+ * budgets and placements and never creates anything. Listing both put four permanent
+ * zero bars in the middle of every launch chart (and three in every optimisation one),
+ * so the chart reads as if something had failed rather than as if it did not apply.
+ * "调度数" stays first: it is the denominator the rest are read against.
+ */
+const LAUNCH_COUNTERS: readonly ActivityCounterKey[] = ['schedules', 'scheduleRuns', 'campaignsCreated', 'adGroupsCreated', 'targetingsCreated']
+const OPTIMIZATION_COUNTERS: readonly ActivityCounterKey[] = ['schedules', 'scheduleRuns', 'optimizationEvents', 'bidsOptimized', 'budgetsOptimized', 'placementsOptimized']
+
+/**
  * The activity counters in one unit (events), so they can share a single axis.
  * `schedules` is included because it is the denominator a reader needs first.
+ *
+ * An unknown category keeps every counter: hiding a metric because the vocabulary
+ * changed would be worse than a zero.
  */
-export function activityCounters(schedules: readonly PerfSchedule[]): ActivityCounter[] {
+export function activityCounters(schedules: readonly PerfSchedule[], actionCategory?: string): ActivityCounter[] {
   const total = (pick: (s: PerfSchedule) => unknown) => schedules.reduce((n, s) => n + num(pick(s)), 0)
   const splitTotal = (pick: (s: PerfSchedule) => Split | undefined) =>
     schedules.reduce((n, s) => n + num(pick(s)?.sp) + num(pick(s)?.sb) + num(pick(s)?.sd), 0)
-  return [
+  const counters: ActivityCounter[] = [
     { key: 'schedules', label: '调度数', value: schedules.length },
     { key: 'scheduleRuns', label: '调度运行次数', value: total(s => s.scheduleRuns) },
     { key: 'optimizationEvents', label: '优化事件数', value: total(s => s.optimizationEvents) },
@@ -320,6 +386,16 @@ export function activityCounters(schedules: readonly PerfSchedule[]): ActivityCo
     { key: 'adGroupsCreated', label: '新建广告组数', value: splitTotal(s => s.adGroups) },
     { key: 'targetingsCreated', label: '新建定向数', value: splitTotal(s => s.targeting) },
   ]
+  return counters.filter(counter => counterApplies(counter.key, actionCategory))
+}
+
+/** Does this category produce this counter at all? */
+export function counterApplies(key: ActivityCounterKey, actionCategory?: string): boolean {
+  if (actionCategory === LAUNCH_CATEGORY)
+    return LAUNCH_COUNTERS.includes(key)
+  if (actionCategory === OPTIMIZATION_CATEGORY)
+    return OPTIMIZATION_COUNTERS.includes(key)
+  return true
 }
 
 /**

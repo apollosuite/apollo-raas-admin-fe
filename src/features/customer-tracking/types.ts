@@ -1,3 +1,15 @@
+/**
+ * The action categories the schedules dim uses, and the one thing that decides which
+ * half of the metrics applies.
+ *
+ * An *optimisation* schedule changes bids, budgets and placements on campaigns that
+ * already exist; a *campaign launch* schedule creates campaigns, ad groups and
+ * targetings and never optimises anything. Both the table columns and the charts read
+ * these, so they live with the shared vocabulary rather than in either of them.
+ */
+export const OPTIMIZATION_CATEGORY = 'Optimization'
+export const LAUNCH_CATEGORY = 'Campaign Launch'
+
 export type TrackingPage = 'accounts' | 'account-detail' | 'performance' | 'profile' | 'schedules' | 'agent' | 'agent-profile' | 'tool-profiles'
 export type RangeKey = '7d' | '30d' | '90d'
 export type Status = 'Healthy' | 'Moderate' | 'At Risk' | 'Churned'

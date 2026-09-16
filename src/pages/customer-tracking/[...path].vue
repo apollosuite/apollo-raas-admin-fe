@@ -59,7 +59,9 @@ import {
   scheduleActionMix,
   scheduleRollup,
   scheduleStatusBreakdown,
+  segmentVocabulary,
 } from '@/features/customer-tracking/performance-analytics'
+import { LAUNCH_CATEGORY } from '@/features/customer-tracking/types'
 import { useColumnFilters } from '@/features/customer-tracking/use-column-filter'
 import { FIRST_TOUCH_WINDOW_DAYS, useDashboardData } from '@/features/customer-tracking/use-dashboard-data'
 
@@ -214,14 +216,41 @@ const profileOptMix = computed(() => [
 // moved the account (server aggregates, pulled per action + scope).
 // Both charts read the *filtered* schedule rows: same grain as the table below them,
 // so a filter on Status or Sub Account redraws them.
+/**
+ * The drilled action's category. It decides which half of the metrics the whole page
+ * shows: an optimisation schedule changes bids/budgets/placements on campaigns that
+ * already exist, a launch schedule creates campaigns, ad groups and targetings, and
+ * neither family is meaningful on the other's page. The table columns, the activity
+ * chart and the segment names all read it.
+ */
+const perfActionCategory = computed(() => performanceSchedules.value.find(s => s.actionType === action.value)?.actionCategory ?? '')
+const isLaunchAction = computed(() => perfActionCategory.value === LAUNCH_CATEGORY)
+/**
+ * What this page calls the three attribution segments: an optimisation page manages
+ * campaigns, a launch page creates them. Same rows, different question.
+ */
+const scheduleSegments = computed(() => segmentVocabulary(perfActionCategory.value))
 const scheduleStatusMix = computed(() => scheduleStatusBreakdown(perfScheduleTableRows.value))
-const scheduleActivity = computed(() => activityCounters(perfScheduleTableRows.value))
+const scheduleActivity = computed(() => activityCounters(perfScheduleTableRows.value, perfActionCategory.value))
 // The chart takes {name, value}; the headline row looks counters up by their stable
 // key so translating a label can never empty it.
 const scheduleActivityChart = computed(() => scheduleActivity.value.map(a => ({ name: a.label, value: a.value })))
 const activityValue = (key: ActivityCounterKey) => scheduleActivity.value.find(a => a.key === key)?.value ?? 0
+/**
+ * The headline counters, in the page's own words, keeping only the ones this action
+ * category can produce - the same rule the chart and the table columns follow.
+ */
+const ACTIVITY_HEADLINE: readonly { key: ActivityCounterKey, label: string }[] = [
+  { key: 'schedules', label: 'Schedules' },
+  { key: 'scheduleRuns', label: 'Schedule Runs' },
+  { key: 'optimizationEvents', label: 'Optimization Events' },
+  { key: 'campaignsCreated', label: 'Campaigns Created' },
+  { key: 'adGroupsCreated', label: 'Ad Groups Created' },
+  { key: 'targetingsCreated', label: 'Targetings Created' },
+]
+const headlineCounters = computed(() => ACTIVITY_HEADLINE.filter(c => scheduleActivity.value.some(a => a.key === c.key)))
 const compositionMetric = ref<CompositionMetric>('ad_spend')
-const compositionData = computed(() => compositionSeries(perfAttribution.value, compositionMetric.value))
+const compositionData = computed(() => compositionSeries(perfAttribution.value, compositionMetric.value, scheduleSegments.value))
 const composition = computed(() => compositionShare(perfAttribution.value, compositionMetric.value))
 const compositionMetricLabel = computed(() => COMPOSITION_METRICS.find(m => m.key === compositionMetric.value)?.label ?? '广告花费')
 const compositionFormat = computed(() => isCurrencyForComposition.value ? 'currency' as const : 'number' as const)
@@ -229,7 +258,7 @@ const isCurrencyForComposition = computed(() => compositionMetric.value === 'ad_
 // Chart 3 is deliberately a fair fight: ACoS of the action's own campaigns against
 // the untouched baseline, per ad product. On this data our segment is *not* cheaper,
 // which is exactly why the value story rests on the within-campaign comparison below.
-const efficiency = computed(() => efficiencyByAdProduct(perfAttribution.value))
+const efficiency = computed(() => efficiencyByAdProduct(perfAttribution.value, scheduleSegments.value))
 const firstTouch = computed(() => firstTouchSummary(perfFirstTouch.value, FIRST_TOUCH_WINDOW_DAYS))
 const firstTouchVolume = computed(() => ({
   categories: ['广告花费 / 活动·天', '广告销售额 / 活动·天'],
@@ -328,12 +357,6 @@ const accountSubCols = makeColumns(accountSubColumns, { navigate })
 const perfProfileCols = makeColumns(perfProfileColumns, { href: (p: any) => `/customer-tracking/performance/profile/${p.amazonProfileId}`, badgeKeys: ['adsApi', 'amsApi', 'spApi'], navigate })
 const perfScheduleCols = makeColumns(actionRollupColumns, { nameKey: 'action', href: (s: any) => `/customer-tracking/performance/schedules/${encodeURIComponent(s.action)}`, navigate })
 const campaignCols = [...makeColumns(campaignColumns, { navigate }), actionsCol]
-/**
- * The drilled action's category, which decides the metric columns: an optimisation
- * schedule changes bids/budgets/placements, a launch schedule creates campaigns and
- * targetings, and neither family is meaningful on the other's page.
- */
-const perfActionCategory = computed(() => performanceSchedules.value.find(s => s.actionType === action.value)?.actionCategory ?? '')
 // The schedule table gains a Profile column only when it spans profiles; a
 // profile-scoped URL repeats the same name on every row.
 const activePerfScheduleColumns = computed(() => {
@@ -631,14 +654,11 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
           Loading campaign analytics…
         </div>
         <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
-          <span>Schedules <span class="font-medium text-foreground">{{ activityValue('schedules') }}</span></span>
-          <!-- Look counters up by their stable key, never by their display label:
-               the labels are translatable and a stale string silently returns 0. -->
-          <span>Schedule Runs <span class="font-medium text-foreground">{{ activityValue('scheduleRuns') }}</span></span>
-          <span>Optimization Events <span class="font-medium text-foreground">{{ activityValue('optimizationEvents') }}</span></span>
-          <span>Campaigns Created <span class="font-medium text-foreground">{{ activityValue('campaignsCreated') }}</span></span>
-          <span>Ad Groups Created <span class="font-medium text-foreground">{{ activityValue('adGroupsCreated') }}</span></span>
-          <span>Targetings Created <span class="font-medium text-foreground">{{ activityValue('targetingsCreated') }}</span></span>
+          <!-- Look counters up by their stable key, never by their display label: the
+               labels are translatable and a stale string silently returns 0. The list
+               itself is category-driven, so a launch page does not report an
+               optimisation event count of zero. -->
+          <span v-for="counter in headlineCounters" :key="counter.key">{{ counter.label }} <span class="font-medium text-foreground">{{ activityValue(counter.key) }}</span></span>
         </div>
 
         <div class="grid gap-3 lg:grid-cols-3">
@@ -657,7 +677,7 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
                 </SelectContent>
               </Select>
               <p class="text-xs text-muted-foreground">
-                账号{{ compositionMetricLabel }}中，{{ composition.share.toFixed(1) }}% 来自本功能管理的广告活动
+                账号{{ compositionMetricLabel }}中，{{ composition.share.toFixed(1) }}% {{ scheduleSegments.sharePhrase }}
                 （{{ formatMetric(composition.part, { currency: isCurrencyForComposition }) }} / {{ formatMetric(composition.total, { currency: isCurrencyForComposition }) }}）。
               </p>
             </CardContent>
@@ -675,30 +695,41 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
           </Card>
         </div>
 
-        <div class="grid items-start gap-3 lg:grid-cols-2">
+        <!-- Stretch, not `items-start`: the two cards are the same kind of panel and
+             must end on the same line. Their charts already share a height, so the
+             slack lands as extra space above the trailing note of the shorter card.
+             A launch action has no first-touch card at all (it never touches an
+             existing campaign), so the ACoS chart takes the whole row instead of
+             sitting beside an empty column. -->
+        <div class="grid gap-3" :class="{ 'lg:grid-cols-2': !isLaunchAction }">
           <!-- Chart 3: the honest cross-section. Our segment is not the cheapest
                per dollar of sales, and the campaign counts travel with the bars. -->
           <Card>
-            <CardContent class="flex flex-col gap-3 p-4">
+            <CardContent class="flex h-full flex-col gap-3 p-4">
               <GroupedBarChart
                 height-class="h-72"
                 title="各广告类型的 ACoS"
                 :categories="efficiency.categories"
                 :series="efficiency.series"
                 format="percent"
-                caption="ACoS = 广告花费 ÷ 广告销售额，越低越好。横轴下方是本段与未管理段的广告活动数，两侧样本量差别很大，读数时需一并考虑。"
+                :caption="`ACoS = 广告花费 ÷ 广告销售额，越低越好。横轴下方是本段与${scheduleSegments.untouchedShort}段的广告活动数，两侧样本量差别很大，读数时需一并考虑。`"
               />
-              <p class="text-xs text-muted-foreground">
-                分段以「广告活动」为单位、在整个区间上判定：只要该活动任意一天带有本功能的归因，即归入「本功能管理」，
+              <p class="mt-auto text-xs text-muted-foreground">
+                分段以「广告活动」为单位、在整个区间上判定：只要该活动任意一天带有本功能的归因，即归入「{{ scheduleSegments.thisAction }}」，
                 因此每个活动只会出现在一侧，不会被重复计数。
               </p>
             </CardContent>
           </Card>
           <!-- Chart 4: the same campaign against itself around our first touch.
                The two comparisons sit side by side so the card does not outgrow the
-               card beside it and leave a column of empty space. -->
-          <Card>
-            <CardContent class="flex flex-col gap-4 p-4">
+               card beside it and leave a column of empty space.
+
+               A campaign-launch action has no first touch to measure: it creates a
+               campaign, it never manages one, so "before and after we touched it" is
+               not a question this page can answer. The card is absent rather than
+               empty, and the back end is not asked for the aggregate either. -->
+          <Card v-if="!isLaunchAction">
+            <CardContent class="flex h-full flex-col gap-4 p-4">
               <div class="grid gap-4 md:grid-cols-2">
                 <GroupedBarChart
                   height-class="h-72"

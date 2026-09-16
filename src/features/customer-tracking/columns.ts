@@ -9,6 +9,7 @@ import type { ColumnSpec, ColumnType, Split } from './types'
 
 import MetricSplit from './components/metric-split.vue'
 import { formatExact, formatMetric } from './format'
+import { LAUNCH_CATEGORY, OPTIMIZATION_CATEGORY } from './types'
 import { connectionLabel, dateValue, isBlank, sortValue, splitTotal, tupleMetric } from './values'
 
 /**
@@ -548,9 +549,8 @@ const PERF_SCHEDULE_LAUNCH_COLUMNS: readonly ColumnSpec[] = [
   ['targeting', 'Targetings Created (SP/SB/SD)', 'split'],
 ]
 
-/** The action categories the schedules dim uses to drive the column set. */
-export const OPTIMIZATION_CATEGORY = 'Optimization'
-export const LAUNCH_CATEGORY = 'Campaign Launch'
+/** The action categories live with the shared vocabulary; re-exported for the tables. */
+export { LAUNCH_CATEGORY, OPTIMIZATION_CATEGORY }
 
 /**
  * The schedule table's columns for one action category.

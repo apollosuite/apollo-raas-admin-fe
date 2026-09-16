@@ -16,8 +16,10 @@ import {
   scheduleRollup,
   scheduleStatusBreakdown,
   segmentTotals,
+  segmentVocabulary,
   toggleTrendMetric,
 } from '../performance-analytics'
+import { LAUNCH_CATEGORY, OPTIMIZATION_CATEGORY } from '../types'
 
 function attribution(over: Partial<AttributionRow> = {}): AttributionRow {
   return {
@@ -126,6 +128,34 @@ describe('composition', () => {
 
   it('reports a zero share rather than NaN when there is no data', () => {
     expect(compositionShare([], 'ad_spend')).toMatchObject({ share: 0, total: 0 })
+  })
+
+  it('names the same buckets by creation on a launch action page', () => {
+    const created = segmentVocabulary(LAUNCH_CATEGORY)
+    // The numbers are the same rows; only the question changes.
+    expect(compositionSeries(rows, 'ad_spend', created)).toEqual([
+      { name: '由本功能创建', value: 100 },
+      { name: '由其它功能创建', value: 200 },
+      { name: '在 Hanna 之外创建', value: 700 },
+    ])
+  })
+
+  it('falls back to the managed words for an unknown category', () => {
+    expect(segmentVocabulary(undefined).thisAction).toBe('本功能管理')
+    expect(segmentVocabulary(OPTIMIZATION_CATEGORY).thisAction).toBe('本功能管理')
+  })
+})
+
+describe('efficiencyByAdProduct on a launch action page', () => {
+  const rows = [
+    attribution({ sponsored_ads_type: 'SPONSORED_PRODUCTS', segment: 'this_action', ad_spend: 250, ad_sales: 1000, campaigns: 40 }),
+    attribution({ sponsored_ads_type: 'SPONSORED_PRODUCTS', segment: 'untouched', ad_spend: 200, ad_sales: 1000, campaigns: 600 }),
+  ]
+
+  it('labels the bars by creation and keeps the counts', () => {
+    const table = efficiencyByAdProduct(rows, segmentVocabulary(LAUNCH_CATEGORY))
+    expect(table.series.map(s => s.name)).toEqual(['由本功能创建', '由其它功能创建', '在 Hanna 之外创建'])
+    expect(table.categories).toEqual(['SP\n本功能创建 40 · Hanna 外创建 600'])
   })
 })
 
@@ -272,6 +302,35 @@ describe('activityCounters', () => {
   })
 })
 
+describe('activityCounters by action category', () => {
+  const rows = [schedule({ scheduleRuns: 3, optimizationEvents: 2, bidsOptimized: 1, launched: { sp: 4, sb: 0, sd: 0 }, adGroups: { sp: 5, sb: 0, sd: 0 }, targeting: { sp: 6, sb: 0, sd: 0 } })]
+
+  it('lists only what a launch action can produce', () => {
+    expect(activityCounters(rows, LAUNCH_CATEGORY).map(c => c.key)).toEqual([
+      'schedules',
+      'scheduleRuns',
+      'campaignsCreated',
+      'adGroupsCreated',
+      'targetingsCreated',
+    ])
+  })
+
+  it('lists only what an optimisation action can produce', () => {
+    expect(activityCounters(rows, OPTIMIZATION_CATEGORY).map(c => c.key)).toEqual([
+      'schedules',
+      'scheduleRuns',
+      'optimizationEvents',
+      'bidsOptimized',
+      'budgetsOptimized',
+      'placementsOptimized',
+    ])
+  })
+
+  it('keeps every counter when the category is unknown', () => {
+    expect(activityCounters(rows)).toHaveLength(9)
+    expect(activityCounters(rows, 'Something New')).toHaveLength(9)
+  })
+})
 describe('scheduleRollup', () => {
   it('collapses schedules to one row per action type', () => {
     const rows = scheduleRollup([

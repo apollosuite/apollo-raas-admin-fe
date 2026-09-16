@@ -29,6 +29,7 @@ import type { AttributionRow, FirstTouchRow } from './performance-analytics'
 import type { AdsAccount, AgentChat, Campaign, Organization, PerfProfile, PerfSchedule, Profile, Schedule, SubAccount, ToolStat } from './types'
 
 import { useFilterContext } from './filter-context'
+import { LAUNCH_CATEGORY } from './types'
 
 export interface DatasetVersion {
   name: string
@@ -965,6 +966,31 @@ export function useDashboardData() {
    * Both read a ~20M row campaign view, so ClickZetta aggregates them and ships
    * Arrow; the browser only ever holds the (small) result.
    */
+  /**
+   * Does this action have a first touch to measure? Only a campaign-launch action
+   * does not, because it never manages an existing campaign.
+   *
+   * The answer lives in the schedule dim, which the page is loading in parallel and
+   * which may not have arrived yet: deciding too early sent the query on exactly the
+   * pages that cannot show it. The wait is bounded - the dim is a few MB the page
+   * needs anyway - and anything unknown keeps the query, because a missing card is
+   * recoverable and a missing number is not.
+   */
+  async function firstTouchAppliesTo(actionType: string, waitMs = 8000): Promise<boolean> {
+    if (!performanceSchedules.value.length) {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(finish, waitMs)
+        const stop = watch(performanceSchedules, finish, { once: true })
+        function finish() {
+          clearTimeout(timer)
+          stop()
+          resolve()
+        }
+      })
+    }
+    return performanceSchedules.value.find(s => s.actionType === actionType)?.actionCategory !== LAUNCH_CATEGORY
+  }
+
   async function loadScheduleAnalytics(actionType: string, profileId?: string, scheduleIds?: string[]): Promise<void> {
     if (!actionType)
       return
@@ -974,9 +1000,14 @@ export function useDashboardData() {
     // `undefined` is "no filter" and an empty array is "the filter kept nothing";
     // the two must not share a cache key just because both look empty.
     const scopeKey = scheduleIds === undefined ? 'all' : `n${scheduleIds.length}:${hashIds(scheduleIds)}`
-    // A valid identifier for the scope's own table: same scope, same table, so a
-    // re-entry still reuses what is already in DuckDB.
-    const scopeSuffix = scopeKey.replace(/[^A-Z0-9]/gi, '_')
+    // One table per (action, profile scope, range, schedule filter) - everything the
+    // payload depends on, and nothing less.
+    //
+    // Naming the table after the schedule filter alone meant a profile-scoped page
+    // reused the unscoped table and a new date range kept the previous numbers: an
+    // existing relation is deliberately reused instead of re-ingested (see
+    // loadArrowDataset), so anything missing from the name is silently stale data.
+    const tableSuffix = hashIds([actionType, profileId ?? 'all', fromDate, toDate, scopeKey])
     const cacheKey = `${actionType}|${profileId ?? 'all'}|${fromDate}|${toDate}|${scopeKey}`
     if (analyticsLoadedFor.value === cacheKey)
       return
@@ -987,12 +1018,21 @@ export function useDashboardData() {
       body.amazon_profile_ids = [profileId]
     if (scheduleIds !== undefined)
       body.schedule_ids = scheduleIds
+    // A campaign-launch action creates campaigns and never touches an existing one,
+    // so the first-touch aggregate has no question to answer on its page. It is not
+    // fetched at all rather than fetched and hidden: the page waits on both requests
+    // before it renders, and querying a number nobody reads is pure latency.
+    //
+    // Only the decision waits for the schedule dim (see `firstTouchAppliesTo`); the
+    // attribution request, which is the slow one, starts straight away.
     analyticsLoading.value = true
     try {
-      const [attribution, firstTouch] = await Promise.all([
-        postArrow('/customer-tracking/performance/attribution', body),
-        postArrow('/customer-tracking/performance/first-touch', { ...body, window_days: FIRST_TOUCH_WINDOW_DAYS }),
-      ])
+      const attributionPromise = postArrow('/customer-tracking/performance/attribution', body)
+      const wantsFirstTouch = await firstTouchAppliesTo(actionType)
+      const firstTouchPromise = wantsFirstTouch
+        ? postArrow('/customer-tracking/performance/first-touch', { ...body, window_days: FIRST_TOUCH_WINDOW_DAYS })
+        : Promise.resolve(null)
+      const [attribution, firstTouch] = await Promise.all([attributionPromise, firstTouchPromise])
       // One physical table per filter scope, rather than replacing a shared
       // \`perf_attribution\`.
       //
@@ -1001,18 +1041,20 @@ export function useDashboardData() {
       // rows: the charts stayed on the unfiltered aggregate while the request that
       // carried the filter came back with the right bytes. A name derived from the
       // scope cannot collide, so an ingest is always a first ingest into a new table.
-      const attributionTable = `perf_attribution_${scopeSuffix}`
-      const firstTouchTable = `perf_first_touch_${scopeSuffix}`
+      const attributionTable = `perf_attribution_${tableSuffix}`
+      const firstTouchTable = `perf_first_touch_${tableSuffix}`
       // A scope's table outlives this component: coming back to a scope must reuse
       // it, both to avoid re-downloading and because re-ingesting into an existing
       // relation is the one path that behaved inconsistently.
       if (!isArrowTableLoaded(attributionTable))
         await loadArrowDataset(attributionTable, attribution)
-      if (!isArrowTableLoaded(firstTouchTable))
+      if (firstTouch && !isArrowTableLoaded(firstTouchTable))
         await loadArrowDataset(firstTouchTable, firstTouch)
       const [attributionRows, firstTouchRows] = await Promise.all([
         runQuery<AttributionRow>(`SELECT * FROM "${attributionTable}"`),
-        runQuery<FirstTouchRow>(`SELECT * FROM "${firstTouchTable}"`),
+        wantsFirstTouch
+          ? runQuery<FirstTouchRow>(`SELECT * FROM "${firstTouchTable}"`)
+          : Promise.resolve([] as FirstTouchRow[]),
       ])
       perfAttribution.value = attributionRows
       perfFirstTouch.value = firstTouchRows

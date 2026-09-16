@@ -64,9 +64,16 @@ function render() {
     color: palette,
     tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' }, valueFormatter: (v: unknown) => unit(v as number | null, true) },
     legend: { bottom: 0, left: 'center', itemWidth: 10, itemHeight: 10, textStyle: { color: muted, fontSize: 11 } },
-    // ECharts 6 replaced `containLabel` with the outer-bounds pair below; using
-    // the old option logs a console warning and silently drops the behaviour.
-    grid: { top: 16, left: 8, right: 8, bottom: 34, outerBoundsMode: 'same', outerBoundsContain: 'axisLabel' },
+    // Fixed insets, identical for every chart of the same height.
+    //
+    // ECharts 6 replaced `containLabel` with the outer-bounds pair, which sizes the
+    // grid to whatever the labels need - so a chart whose category labels wrap to a
+    // second line (the ACoS bars carry the campaign counts) drew a plot 36px shorter
+    // than the first-touch charts beside it, and the two never lined up even though
+    // their canvases were the same size. The room is reserved up front instead: 54px
+    // below fits two label lines plus the legend, 52px on the left fits the widest
+    // tick ("30.0%").
+    grid: { top: 16, left: 52, right: 8, bottom: 54 },
     xAxis: {
       type: 'category',
       data: props.categories,

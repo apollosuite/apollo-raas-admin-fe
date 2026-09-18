@@ -31,6 +31,13 @@ const props = defineProps<{
    * height, or the shorter one leaves a column of empty space under its bars.
    */
   heightClass?: string
+  /**
+   * Stack the series into one bar per category instead of grouping them side by side.
+   *
+   * Used with values that already sum to a whole (a share out of 100): the bar is one
+   * day, each band is an organization's share of that day.
+   */
+  stack?: boolean
 }>()
 
 use([BarChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer])
@@ -83,14 +90,23 @@ function render() {
     },
     yAxis: {
       type: 'value',
+      // A 100% stack is bounded by definition; without this ECharts rounds the axis past
+      // the data (a 99% stack drew a 120% axis) and the chart claims headroom that the
+      // measurement does not have.
+      max: props.stack && props.format === 'percent' ? 100 : undefined,
       axisLabel: { color: muted, fontSize: 10, formatter: (v: number) => unit(v, false) },
       splitLine: { lineStyle: { color: border } },
     },
     series: props.series.map(series => ({
       name: series.name,
       type: 'bar',
+      stack: props.stack ? 'total' : undefined,
+      // A stacked band has no free top edge, so only the topmost one is rounded; a
+      // border on every band would draw a grid over the stack.
       barMaxWidth: 36,
-      itemStyle: { borderRadius: [3, 3, 0, 0], borderColor: background, borderWidth: 1 },
+      itemStyle: props.stack
+        ? { borderColor: background, borderWidth: 0.5 }
+        : { borderRadius: [3, 3, 0, 0], borderColor: background, borderWidth: 1 },
       data: series.values,
     })),
   })
@@ -107,7 +123,7 @@ onMounted(() => {
 // flush: 'post' is load-bearing: the categories arrive after mount (they come from
 // a server aggregate), so a pre-flush watcher would run before the v-if has created
 // the canvas and the chart would silently never appear.
-watch(() => [props.categories, props.series, props.format], render, { deep: true, flush: 'post' })
+watch(() => [props.categories, props.series, props.format, props.stack], render, { deep: true, flush: 'post' })
 onBeforeUnmount(() => {
   window.removeEventListener('resize', resize)
   chart?.dispose()

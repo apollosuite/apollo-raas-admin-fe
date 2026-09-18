@@ -6,8 +6,10 @@ import {
   distinctValues,
   isActiveFilter,
   matchFilter,
+  MAX_OPTION_VALUES,
   metricOptionsFor,
   operatorsFor,
+  supportsValueOptions,
   takesSecondValue,
   valueEditorFor,
 } from '../filter-predicates'
@@ -191,5 +193,51 @@ describe('distinctValues', () => {
   it('returns sorted unique non-blank values', () => {
     const rows = [{ s: 'b' }, { s: 'a' }, { s: 'b' }, { s: null }, { s: '' }]
     expect(distinctValues(rows, 's')).toEqual(['a', 'b'])
+  })
+
+  it('is what a picker is fed, so it must not invent values', () => {
+    // The list is the parquet column's own vocabulary, not a guess: a value that never
+    // appears in the data must not be offered.
+    const rows = [{ tool: 'sp_ad_data_check' }, { tool: 'amazon_web_analyze' }]
+    expect(distinctValues(rows, 'tool')).toEqual(['amazon_web_analyze', 'sp_ad_data_check'])
+    expect(distinctValues(rows, 'tool')).not.toContain('sp_search_ad_basic_performance')
+  })
+})
+
+describe('picking values instead of typing them', () => {
+  it('offers the membership operators on text columns too, not just enums', () => {
+    // Tool, organization and profile are text columns; the user wanted to choose them.
+    expect(operatorsFor('text').map(o => o.value)).toContain('isAnyOf')
+    expect(operatorsFor('text').map(o => o.value)).toContain('isNoneOf')
+  })
+
+  it('decides per type whether a picker is even possible', () => {
+    expect(supportsValueOptions('text')).toBe(true)
+    expect(supportsValueOptions('enum')).toBe(true)
+    expect(supportsValueOptions('connection')).toBe(true)
+    expect(supportsValueOptions('number')).toBe(false)
+    expect(supportsValueOptions('date')).toBe(false)
+  })
+
+  it('keeps the option cap low enough to stay a list', () => {
+    expect(MAX_OPTION_VALUES).toBeGreaterThan(530) // the profiles in one export
+    expect(MAX_OPTION_VALUES).toBeLessThanOrEqual(2000)
+  })
+
+  it('matches membership exactly, unlike the substring operators', () => {
+    const filter = { key: 'v', operator: 'isAnyOf' as const, values: ['Felix'] }
+    expect(matches('Felix', 'text', filter)).toBe(true)
+    // "contains" would have matched this; membership must not.
+    expect(matches('Felix the great', 'text', filter)).toBe(false)
+    expect(matches('Felix', 'text', { operator: 'isNoneOf', values: ['Felix'] })).toBe(false)
+    expect(matches('Mico', 'text', { operator: 'isNoneOf', values: ['Felix'] })).toBe(true)
+  })
+
+  it('treats an untouched picker as no constraint, not as match-nothing', () => {
+    // The chip is created with an empty value and only becomes "active" once something
+    // is picked; a blank set must not blank the table out from under the user.
+    expect(matches('Felix', 'text', { operator: 'isAnyOf', values: [] })).toBe(true)
+    expect(matches('Felix', 'text', { operator: 'isAnyOf', values: [''] })).toBe(true)
+    expect(matches('Felix', 'text', { operator: 'isNoneOf', values: [''] })).toBe(true)
   })
 })

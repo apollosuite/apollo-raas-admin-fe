@@ -59,6 +59,23 @@ export function dateValue(v: unknown): string {
  * returns early for undefined BEFORE applying the desc negation, which is what
  * makes "last" mean last rather than "first when descending".
  */
+/**
+ * Every day from `from` to `to` inclusive, as ISO day strings.
+ *
+ * Shared by the trend charts: a range's x axis is the range, not the rows that happen to
+ * exist, so a day nobody used the tool has to be produced here and filled with zeros
+ * rather than silently missing from the series.
+ */
+export function eachDay(from: string, to: string): string[] {
+  const days: string[] = []
+  const end = new Date(`${to}T00:00:00Z`).getTime()
+  if (Number.isNaN(end))
+    return days
+  for (let t = new Date(`${from}T00:00:00Z`).getTime(); t <= end; t += 86_400_000)
+    days.push(new Date(t).toISOString().slice(0, 10))
+  return days
+}
+
 export function sortValue(v: unknown): unknown {
   return isBlank(v) ? undefined : v
 }

@@ -16,6 +16,7 @@
 import type { PerfDailyPoint, PerfSchedule, Split } from './types'
 
 import { LAUNCH_CATEGORY, OPTIMIZATION_CATEGORY } from './types'
+import { eachDay } from './values'
 
 export type AttributionSegment = 'this_action' | 'other_actions' | 'untouched'
 export type CompositionMetric = 'ad_spend' | 'ad_sales' | 'ad_orders' | 'impressions' | 'clicks' | 'campaigns'
@@ -641,4 +642,199 @@ export function scheduleRollup(schedules: readonly PerfSchedule[]): PerfSchedule
     addSplit(group.targeting, schedule.targeting)
   }
   return [...groups.values()].sort((a, b) => b.runs - a.runs)
+}
+// ---------------------------------------------------------------------------
+// L2 action trend: what one action did, against what its campaigns earned
+// ---------------------------------------------------------------------------
+
+/**
+ * The per-action campaign facts, and the schedule column each one is keyed by.
+ *
+ * Mirrors the back end's action map: the export materialises one fact per action type,
+ * named after the lakehouse column abbreviations, so the front end has to know which file
+ * belongs to the action the page is on. An unknown action has no fact, and the money side
+ * of the chart is then absent rather than wrong.
+ */
+export const ACTION_TREND_FACTS: Record<string, { fact: string, column: string }> = {
+  'Campaign Generation': { fact: 'performance_l2_schedules_launched_campaigns_cg_fact', column: 'launched_cg_schedule_id' },
+  'Cyber Minigun': { fact: 'performance_l2_schedules_launched_campaigns_cmg_fact', column: 'launched_cmg_schedule_id' },
+  'Keyword Harvesting': { fact: 'performance_l2_schedules_launched_campaigns_kh_fact', column: 'launched_kh_schedule_id' },
+  'Bid Optimization': { fact: 'performance_l2_schedules_managing_campaigns_bid_opt_fact', column: 'managing_bid_opt_schedule_id' },
+  'Budget Optimization': { fact: 'performance_l2_schedules_managing_campaigns_budget_opt_fact', column: 'managing_budget_opt_schedule_id' },
+  'GoalBased Bid Optimization': { fact: 'performance_l2_schedules_managing_campaigns_gb_opt_fact', column: 'managing_gb_opt_schedule_id' },
+  'Placement Optimization': { fact: 'performance_l2_schedules_managing_campaigns_placement_opt_fact', column: 'managing_placement_opt_schedule_id' },
+}
+
+export function actionTrendFactFor(actionType: string): { fact: string, column: string } | undefined {
+  return ACTION_TREND_FACTS[actionType]
+}
+
+/** One day of the action trend: what the action did, and what its campaigns earned. */
+export interface ActionTrendDay {
+  /**
+   * The chart plots whichever measures the reader picks, so it addresses them by key at
+   * runtime - the same reason `PerfDailyPoint` carries this index signature.
+   */
+  [metric: string]: number | string
+  date: string
+  campaignsCreated: number
+  targetingsCreated: number
+  bidsOptimized: number
+  budgetsOptimized: number
+  placementsOptimized: number
+  adSpend: number
+  adSales: number
+  acos: number
+}
+
+/** A counter row from the schedule fact, already summed per (day, schedule). */
+export interface ActionTrendActivityRow {
+  date: string
+  /** The grain the chart cross-filters on: a table filter keeps ids, the chart keeps rows. */
+  scheduleId?: string
+  bidsOptimized?: number
+  budgetsOptimized?: number
+  placementsOptimized?: number
+  spCampaignsCreated?: number
+  sbCampaignsCreated?: number
+  sdCampaignsCreated?: number
+  spTargetingsCreated?: number
+  sbTargetingsCreated?: number
+  sdTargetingsCreated?: number
+}
+
+/** A money row from the per-action campaign fact, already summed per (day, schedule). */
+export interface ActionTrendMoneyRow {
+  date: string
+  scheduleId?: string
+  adSpend?: number
+  adSales?: number
+}
+
+/**
+ * The range's days with both sources merged onto them.
+ *
+ * They do not cover the same days - in one measured window the schedule fact had 27 days
+ * of activity and the campaign fact 28 - so the axis is the range and a day either side is
+ * missing is a real zero rather than a gap. ACoS is taken on the summed day: a range ACoS
+ * plotted daily would be a flat line by construction.
+ */
+export function actionTrendDays(
+  activity: readonly ActionTrendActivityRow[],
+  money: readonly ActionTrendMoneyRow[],
+  from: string,
+  to: string,
+): ActionTrendDay[] {
+  const byDate = new Map<string, ActionTrendDay>()
+  const empty = (date: string): ActionTrendDay => ({
+    date,
+    campaignsCreated: 0,
+    targetingsCreated: 0,
+    bidsOptimized: 0,
+    budgetsOptimized: 0,
+    placementsOptimized: 0,
+    adSpend: 0,
+    adSales: 0,
+    acos: 0,
+  })
+  const day = (date: string) => {
+    let point = byDate.get(date)
+    if (!point) {
+      point = empty(date)
+      byDate.set(date, point)
+    }
+    return point
+  }
+  for (const row of activity) {
+    const date = String(row.date ?? '')
+    if (!date || date < from || date > to)
+      continue
+    const point = day(date)
+    point.campaignsCreated += num(row.spCampaignsCreated) + num(row.sbCampaignsCreated) + num(row.sdCampaignsCreated)
+    point.targetingsCreated += num(row.spTargetingsCreated) + num(row.sbTargetingsCreated) + num(row.sdTargetingsCreated)
+    point.bidsOptimized += num(row.bidsOptimized)
+    point.budgetsOptimized += num(row.budgetsOptimized)
+    point.placementsOptimized += num(row.placementsOptimized)
+  }
+  for (const row of money) {
+    const date = String(row.date ?? '')
+    if (!date || date < from || date > to)
+      continue
+    const point = day(date)
+    point.adSpend += num(row.adSpend)
+    point.adSales += num(row.adSales)
+  }
+  return eachDay(from, to).map((date) => {
+    const point = byDate.get(date) ?? empty(date)
+    point.acos = point.adSales > 0 ? point.adSpend / point.adSales * 100 : 0
+    return point
+  })
+}
+
+/** One plottable measure: which field on the day, how it is named, how it formats. */
+export interface ActionTrendMetric {
+  key: string
+  label: string
+  currency?: boolean
+  percent?: boolean
+}
+
+/**
+ * What the left (counts) axis may plot on this page.
+ *
+ * Category-driven like the table columns and the headline row, and a counter the action
+ * produced nothing of is dropped: every optimisation action only ever writes its own
+ * counter, so a Bid Optimization page would otherwise draw two permanently flat lines.
+ * Ad groups are deliberately absent - measured day for day they were identical to
+ * campaigns (4,913 = 4,913 over one window), so the second line would say nothing.
+ */
+const LEFT_METRICS: readonly ActionTrendMetric[] = [
+  { key: 'campaignsCreated', label: '新建广告活动数' },
+  { key: 'targetingsCreated', label: '新建投放数' },
+  { key: 'bidsOptimized', label: 'Bid 优化数' },
+  { key: 'budgetsOptimized', label: 'Budget 优化数' },
+  { key: 'placementsOptimized', label: 'Placement 优化数' },
+]
+
+const LAUNCH_LEFT: readonly string[] = ['campaignsCreated', 'targetingsCreated']
+const OPTIMIZATION_LEFT: readonly string[] = ['bidsOptimized', 'budgetsOptimized', 'placementsOptimized']
+
+export function actionTrendLeftMetrics(category: string | undefined, days: readonly ActionTrendDay[]): ActionTrendMetric[] {
+  // An unknown category (the dim has not arrived yet) offers nothing rather than guessing
+  // a family: showing optimisation counters on a launch page for one frame is worse than
+  // showing an empty chart for one frame.
+  const keys = category === LAUNCH_CATEGORY
+    ? LAUNCH_LEFT
+    : category === OPTIMIZATION_CATEGORY ? OPTIMIZATION_LEFT : []
+  return LEFT_METRICS
+    .filter(metric => keys.includes(metric.key))
+    .filter(metric => seriesTotal(days, metric.key) > 0)
+}
+
+/**
+ * What the right axis may plot. One select, so money and a ratio can never share that axis:
+ * an ACoS in the low tens against a spend in the tens of thousands is a flat line on the
+ * floor.
+ */
+export const ACTION_TREND_RIGHT_METRICS: readonly ActionTrendMetric[] = [
+  { key: 'adSpend', label: '广告花费', currency: true },
+  { key: 'adSales', label: '广告销售', currency: true },
+  { key: 'acos', label: 'ACoS', percent: true },
+]
+
+export const DEFAULT_ACTION_TREND_RIGHT = 'adSpend'
+
+export function seriesTotal(days: readonly ActionTrendDay[], key: string): number {
+  return days.reduce((sum, day) => sum + num(day[key]), 0)
+}
+
+/** The busiest day for one measure; the caption quotes it instead of making readers scan. */
+export function seriesPeak(days: readonly ActionTrendDay[], key: string): { date: string, value: number } {
+  let peak = { date: '', value: 0 }
+  for (const day of days) {
+    const value = num(day[key])
+    if (value > peak.value)
+      peak = { date: day.date, value }
+  }
+  return peak
 }

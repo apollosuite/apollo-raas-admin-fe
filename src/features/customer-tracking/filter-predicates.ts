@@ -24,6 +24,10 @@ const TEXT_OPS: OperatorDef[] = [
   { value: 'notEquals', label: 'does not equal' },
   { value: 'startsWith', label: 'starts with' },
   { value: 'endsWith', label: 'ends with' },
+  // A text column with a bounded vocabulary is a category, so it offers the same
+  // pick-from-the-data operators an enum does (tool names, organizations, profiles).
+  { value: 'isAnyOf', label: 'is any of' },
+  { value: 'isNoneOf', label: 'is none of' },
 ]
 
 const NUMBER_OPS: OperatorDef[] = [
@@ -90,6 +94,19 @@ export function operatorLabel(type: ColumnType, op: FilterOperator): string {
 /** Operators whose editor needs a second input box. */
 export function takesSecondValue(op: FilterOperator): boolean {
   return op === 'between' || op === 'notBetween'
+}
+
+/**
+ * How many distinct values a column may hold and still be offered as a picker.
+ *
+ * Above this the column is a name (a campaign, a schedule) rather than a category, and a
+ * list would be both unusable and misleading - the chip falls back to a text box.
+ */
+export const MAX_OPTION_VALUES = 1000
+
+/** Types whose value can be picked from the data instead of typed. */
+export function supportsValueOptions(type: ColumnType): boolean {
+  return type === 'text' || type === 'enum' || type === 'connection'
 }
 
 /** The kind of editor a value needs. */
@@ -193,7 +210,12 @@ function dateMatch(value: string, op: FilterOperator, values: string[]): boolean
 }
 
 function setMatch(value: string, op: FilterOperator, values: string[]): boolean {
-  const has = values.includes(value)
+  // The chip starts with an empty placeholder value, so blanks are ignored: an
+  // untouched picker is "no constraint", not "match nothing".
+  const wanted = values.filter(v => String(v ?? '').trim() !== '')
+  if (wanted.length === 0)
+    return true
+  const has = wanted.includes(value)
   if (op === 'isAnyOf')
     return has
   if (op === 'isNoneOf')
@@ -226,7 +248,11 @@ export function matchFilter(row: Record<string, any>, spec: ColumnSpec, filter: 
 
   switch (type) {
     case 'text':
-      return textMatch(String(raw ?? ''), op, filter.values)
+      // A text column may be filtered by picking values (see TEXT_OPS); membership is
+      // exact, unlike the substring operators.
+      return op === 'isAnyOf' || op === 'isNoneOf'
+        ? setMatch(String(raw ?? ''), op, filter.values)
+        : textMatch(String(raw ?? ''), op, filter.values)
     case 'enum':
       return setMatch(String(raw ?? ''), op, filter.values)
     case 'connection':
@@ -260,6 +286,10 @@ export function isActiveFilter(filter: ColumnFilter): boolean {
   if (filter.operator === 'isEmpty' || filter.operator === 'isNotEmpty' || filter.operator === 'isTrue' || filter.operator === 'isFalse')
     return true
   if (filter.operator === 'between' || filter.operator === 'notBetween')
+    return filter.values.some(v => String(v ?? '').trim() !== '')
+  // A picker holds a set, so any picked value counts - and a chip created with an empty
+  // placeholder must stay inactive until something is chosen.
+  if (filter.operator === 'isAnyOf' || filter.operator === 'isNoneOf')
     return filter.values.some(v => String(v ?? '').trim() !== '')
   return String(filter.values[0] ?? '').trim() !== ''
 }

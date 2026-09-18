@@ -315,5 +315,95 @@ export interface Schedule {
   adGroups: number
   targeting: number
 }
-export interface ToolStat { tool: string, profilesUsing: number, calls: number, lastCalled: string | null, success: number | null, errors: number }
+/**
+ * One tool over the range, across every organization.
+ *
+ * `success` is a percentage computed as success/calls, where `calls` is the export's
+ * own call count - so a call the export never classified still counts against the tool
+ * instead of disappearing from the denominator.
+ */
+export interface ToolStat {
+  tool: string
+  orgsUsing: number
+  profilesUsing: number
+  calls: number
+  lastCalled: string | null
+  success: number
+  errors: number
+}
+
+/**
+ * One row of the Agent page's organization + profile roll-up.
+ *
+ * The export is at (org, profile, date) grain; this is the range's collapse. A row
+ * with an empty profile is the organization's own activity - chats and tool calls that
+ * were never attached to an Amazon profile - and is kept rather than dropped, because
+ * dropping it would make the org totals disagree with the row sums.
+ */
+export interface AgentOrgProfileStat {
+  orgId: string
+  organization: string
+  amazonProfileId: string | null
+  name: string | null
+  marketplace: string | null
+  entity: string | null
+  chats: number
+  toolCalls: number
+  toolsUsed: number
+  lastActivity: string | null
+}
+
+/** One tool inside one organization, at tool x sub account x profile grain. */
+export interface AgentOrgToolStat {
+  tool: string
+  subAccount: string
+  /** Profile identity, so the charts above the table can aggregate by profile. */
+  amazonProfileId: string | null
+  name: string | null
+  /** Disambiguates two profiles that share a name inside one organization. */
+  marketplace: string | null
+  calls: number
+  lastCalled: string | null
+  success: number
+  errors: number
+}
+
+/** One organization using one tool, at organization x profile grain. */
+export interface AgentToolOrgStat {
+  orgId: string
+  organization: string
+  name: string | null
+  /** The profile's marketplace; null when the export has none for it. */
+  marketplace: string | null
+  calls: number
+  lastCalled: string | null
+  success: number
+  errors: number
+}
+
+/**
+ * One day of a tool's usage, across every organization.
+ *
+ * Volume and breadth together: `calls` against the number of organizations and profiles
+ * active that day is what separates "more teams adopted it" from "the same teams called
+ * it harder".
+ */
+export interface AgentToolTrendRow {
+  date: string
+  calls: number
+  orgs: number
+  profiles: number
+}
+
+/**
+ * One (day, organization) cell of a tool's usage.
+ *
+ * No longer read by a page - the tool page's chart is a per-day trend now - but kept
+ * until the decision to drop `dailyOrgShares` is made, so its tests keep guarding it.
+ */
+export interface AgentToolDailyRow {
+  date: string
+  org: string
+  calls: number
+}
 export interface AgentChat { name: string, date: string, sub: string, first: string, summary: string }

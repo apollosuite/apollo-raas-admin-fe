@@ -40,9 +40,14 @@ function applyPreset(days: number) {
 <template>
   <Popover>
     <PopoverTrigger as-child>
-      <Button variant="outline" class="h-9 w-[220px] justify-start gap-2 text-left font-normal">
+      <!--
+        The trigger sizes to its content: a fixed 220px clipped the end of the range
+        ("2026-08-19 → 2026-09-…"), and the label is the one thing this control exists to
+        show.
+      -->
+      <Button variant="outline" class="h-9 w-auto justify-start gap-2 whitespace-nowrap text-left font-normal">
         <CalendarIcon class="text-muted-foreground size-4" />
-        <span class="truncate">{{ modelValue.from }} → {{ modelValue.to }}</span>
+        <span>{{ modelValue.from }} → {{ modelValue.to }}</span>
       </Button>
     </PopoverTrigger>
     <PopoverContent align="start" class="w-auto p-0">

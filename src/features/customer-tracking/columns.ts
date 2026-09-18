@@ -4,8 +4,9 @@ import { h } from 'vue'
 
 import DataTableColumnHeader from '@/components/data-table/column-header.vue'
 import { Badge } from '@/components/ui/badge'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
-import type { ColumnSpec, ColumnType, Split } from './types'
+import type { AgentOrgProfileStat, AgentOrgToolStat, AgentToolOrgStat, ColumnSpec, ColumnType, Split } from './types'
 
 import MetricSplit from './components/metric-split.vue'
 import { formatExact, formatMetric } from './format'
@@ -82,6 +83,7 @@ const SPLIT_RENDER: Record<string, { labels: [string, string, string], currency?
 interface ResolvedColumnOptions extends ColumnBuildOptions {
   nameKey: string
   badgeKeys: string[]
+  previewKeys: string[]
 }
 
 /** Per-column cell renderers; the type decides everything. */
@@ -112,14 +114,37 @@ function renderCell(spec: ColumnSpec, row: Record<string, any>, opts: ResolvedCo
   }
 
   if (key === opts.nameKey) {
-    const clazz = 'max-w-[180px] truncate font-medium'
+    // The identity cell wraps instead of truncating. It used to clip itself at a hard-coded
+    // 180px even when its column was wider, so an organization name 2px over that limit ended
+    // in "..." and a 276px tool name lost a third of itself - and for names like
+    // "Campaign Builder Action - 1788418041" truncation eats exactly the part that tells two
+    // rows apart. `w-full` makes the column's width the only limit, and what still does not
+    // fit on one line wraps instead of disappearing.
+    const clazz = 'block w-full whitespace-normal break-words font-medium'
     if (opts.href) {
       return h('button', {
         class: `${clazz} text-left text-primary transition-colors hover:underline`,
+        title: String(v),
         onClick: () => opts.navigate(opts.href!(row)),
       }, String(v))
     }
-    return h('span', { class: clazz }, String(v))
+    return h('span', { class: clazz, title: String(v) }, String(v))
+  }
+
+  if (opts.previewKeys.includes(key)) {
+    const text = String(v)
+    // Same composition the marketing pages use for their long JSON previews: a truncated
+    // trigger, and a scrollable panel that preserves the text's own line breaks.
+    return h(TooltipProvider, { delayDuration: 150 }, () => h(Tooltip, null, () => [
+      h(TooltipTrigger, { asChild: true }, () => h('span', {
+        class: 'block w-full cursor-default truncate text-left',
+      }, text)),
+      h(TooltipContent, {
+        side: 'top',
+        align: 'start',
+        class: 'max-h-[420px] max-w-[520px] overflow-auto border bg-background p-3 text-foreground shadow-lg',
+      }, () => h('pre', { class: 'whitespace-pre-wrap break-words font-sans text-xs leading-5' }, text)),
+    ]))
   }
 
   return h('span', { class: 'font-mono tabular-nums' }, cellDisplay(row, spec))
@@ -233,7 +258,15 @@ const WIDTH_BY_TYPE: Record<ColumnType, WidthRange> = {
   list: { size: 200, minSize: 120, maxSize: 480 },
 }
 
-/** Identity and prose columns need more room than their type implies. */
+/**
+ * The identity column - the first column of every table here - is the one a reader scans,
+ * and its values are the longest strings on the page (a tool name measured 276px, an
+ * organization name 210px). It gets its own width instead of the 180px a text column
+ * defaults to, and a generous max so it can be dragged to show a name in full.
+ */
+const IDENTITY_WIDTH: WidthRange = { size: 320, minSize: 140, maxSize: 720 }
+
+/** Non-identity columns that need more room than their type implies. */
 const WIDTH_BY_KEY: Record<string, WidthRange> = {
   name: { size: 200, minSize: 120, maxSize: 520 },
   action: { size: 220, minSize: 140, maxSize: 520 },
@@ -242,7 +275,9 @@ const WIDTH_BY_KEY: Record<string, WidthRange> = {
   first: { size: 280, minSize: 140, maxSize: 640 },
 }
 
-export function widthFor(key: string, type: ColumnType): WidthRange {
+export function widthFor(key: string, type: ColumnType, identity = false): WidthRange {
+  if (identity)
+    return IDENTITY_WIDTH
   return WIDTH_BY_KEY[key] ?? WIDTH_BY_TYPE[type]
 }
 
@@ -255,12 +290,20 @@ export interface ColumnBuildOptions {
   href?: (row: any) => string
   nameKey?: string
   badgeKeys?: string[]
+  /**
+   * Columns whose cell shows a truncated line and reveals the full text on hover.
+   *
+   * For prose that is wider than any sane column - a conversation's first message and its
+   * summary. The preview keeps the author's line breaks (`whitespace-pre-wrap`) instead of
+   * flattening them into one run-on line.
+   */
+  previewKeys?: string[]
   /** Router push, injected so this module stays free of router plumbing. */
   navigate: (to: string) => void
 }
 
 export function makeColumns(specs: readonly ColumnSpec[], opts: ColumnBuildOptions): ColumnDef<any>[] {
-  const options: ResolvedColumnOptions = { nameKey: 'name', badgeKeys: [], ...opts }
+  const options: ResolvedColumnOptions = { nameKey: 'name', badgeKeys: [], previewKeys: [], ...opts }
   return specs.map((spec) => {
     const [key, label, type] = spec
     // Every column gets an explicit accessorFn so nulls normalise to undefined
@@ -269,12 +312,18 @@ export function makeColumns(specs: readonly ColumnSpec[], opts: ColumnBuildOptio
       ? (row: any) => (row?.[key]?.sp === undefined ? undefined : splitTotal(row[key]))
       : (row: any) => sortValue(row?.[key])
 
-    const width = widthFor(key, type)
+    const width = widthFor(key, type, key === options.nameKey)
 
     return {
       id: key,
       accessorFn,
-      header: ({ column }: any) => h(DataTableColumnHeader, { column, title: label }),
+      // The header needs the whole sorting state, not just this column's, to number a
+      // multi-column sort.
+      header: ({ column, table }: any) => h(DataTableColumnHeader, {
+        column,
+        title: label,
+        sortCount: table.getState().sorting.length,
+      }),
       cell: ({ row }: any) => renderCell(spec, row.original, options),
       size: width.size,
       minSize: width.minSize,
@@ -444,33 +493,71 @@ export const OPTIMIZATION_CAMPAIGN_COLUMNS: readonly ColumnSpec[] = [
   ['cvr', 'CVR', 'percent'],
 ]
 
-export const AGENT_PROFILE_COLUMNS: readonly ColumnSpec[] = [
+/**
+ * A column set whose keys are checked against the row type it renders.
+ *
+ * A column listed here but missing from the query's SELECT renders as an empty cell and
+ * nothing anywhere complains - the Agent tool page shipped a Marketplace column that way.
+ * Typing the key as `keyof Row` turns that into a compile error instead.
+ */
+function columnsFor<Row>(specs: readonly (readonly [keyof Row & string, string, ColumnType])[]): readonly ColumnSpec[] {
+  return specs as readonly ColumnSpec[]
+}
+
+/**
+ * Agent Analytics L1: one row per (organization, profile).
+ *
+ * Organization leads and is the frozen, clickable identity - the drill-down is the
+ * organization, not the profile - while a row whose profile is empty (the org's own
+ * activity, chats and calls never attached to an Amazon profile) still belongs to that
+ * organization and stays in the list rather than being dropped.
+ */
+export const AGENT_ORG_PROFILE_COLUMNS = columnsFor<AgentOrgProfileStat>([
+  ['organization', 'Organization', 'text'],
   ['name', 'Profile', 'text'],
   ['marketplace', 'Marketplace', 'enum'],
   ['entity', 'Entity', 'text'],
-  ['organization', 'Organization', 'text'],
   ['chats', 'Agent Chats', 'number'],
   ['toolCalls', 'Tool Calls', 'number'],
   ['toolsUsed', 'Tools Used', 'number'],
   ['lastActivity', 'Last Agent Activity', 'timestamp'],
-]
+])
 
+/**
+ * Agent Analytics L1, Tool Stats: one row per tool over the range.
+ *
+ * Breadth (how many organizations called it) and depth (calls per organization, and how
+ * many days a pair stayed active) sit next to the raw total on purpose: a tool everyone
+ * tries once and abandons and a tool three organizations use daily have similar or even
+ * inverted totals, and only the pair tells them apart.
+ */
 export const TOOL_COLUMNS: readonly ColumnSpec[] = [
   ['tool', 'Tool', 'text'],
+  ['orgsUsing', 'Orgs Using', 'number'],
   ['profilesUsing', 'Profiles Using Tool', 'number'],
   ['calls', 'Tool Calls', 'number'],
+  ['callsPerOrg', 'Calls / Org', 'number'],
+  ['medianActiveDays', 'Median Active Days', 'number'],
   ['lastCalled', 'Last Called', 'timestamp'],
   ['success', 'Success Rate', 'percent'],
   ['errors', 'Errors', 'number'],
 ]
 
-export const PROFILE_TOOL_COLUMNS: readonly ColumnSpec[] = [
+/**
+ * Agent Analytics L2 (organization details): one tool per sub account and profile.
+ *
+ * The same tool is listed once per sub account x profile that used it: inside one
+ * organization that split is what tells a reviewer who is using what.
+ */
+export const AGENT_ORG_TOOL_COLUMNS = columnsFor<AgentOrgToolStat>([
   ['tool', 'Tool', 'text'],
+  ['subAccount', 'Sub Account', 'text'],
+  ['name', 'Profile', 'text'],
   ['calls', 'Tool Calls', 'number'],
   ['lastCalled', 'Last Called', 'timestamp'],
   ['success', 'Success Rate', 'percent'],
   ['errors', 'Errors', 'number'],
-]
+])
 
 export const CHAT_COLUMNS: readonly ColumnSpec[] = [
   ['name', 'Chat Name', 'text'],
@@ -480,15 +567,21 @@ export const CHAT_COLUMNS: readonly ColumnSpec[] = [
   ['summary', 'Chat Summary', 'text'],
 ]
 
-export const TOOL_PROFILE_COLUMNS: readonly ColumnSpec[] = [
+/**
+ * Agent Analytics L2 (one tool): which organizations use it, per profile.
+ *
+ * Organization leads because the question here is "who depends on this tool", and the
+ * same profile name can exist under several organizations.
+ */
+export const AGENT_TOOL_ORG_COLUMNS = columnsFor<AgentToolOrgStat>([
+  ['organization', 'Organization', 'text'],
   ['name', 'Profile', 'text'],
   ['marketplace', 'Marketplace', 'enum'],
-  ['organization', 'Organization', 'text'],
   ['calls', 'Tool Calls', 'number'],
   ['lastCalled', 'Last Called', 'timestamp'],
   ['success', 'Success Rate', 'percent'],
   ['errors', 'Errors', 'number'],
-]
+])
 
 /**
  * Performance L1 "Schedules Table": one row per action type, rolled up over the
@@ -636,9 +729,10 @@ export const DEFAULT_SORTS: Record<string, { id: string, desc: boolean }[]> = {
   'perf-schedules': [{ id: 'scheduleRuns', desc: true }],
   'campaigns': [{ id: 'adSpend', desc: true }],
   'schedules': [{ id: 'created', desc: true }],
-  'agent-profiles': [{ id: 'chats', desc: true }],
+  'agent-org-profiles': [{ id: 'toolCalls', desc: true }],
   'tools': [{ id: 'calls', desc: true }],
-  'profile-tools': [{ id: 'calls', desc: true }],
+  'agent-org-tool-rank': [{ id: 'calls', desc: true }],
+  'agent-org-tools': [{ id: 'calls', desc: true }],
   'chats': [{ id: 'date', desc: true }],
-  'tool-profiles': [{ id: 'calls', desc: true }],
+  'agent-tool-orgs': [{ id: 'calls', desc: true }],
 }

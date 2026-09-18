@@ -5,6 +5,9 @@ import type { PerfSchedule } from '../types'
 
 import {
   actionLabel,
+  actionTrendDays,
+  actionTrendFactFor,
+  actionTrendLeftMetrics,
   activityCounters,
   adProductLabel,
   compositionSeries,
@@ -17,6 +20,8 @@ import {
   scheduleStatusBreakdown,
   segmentTotals,
   segmentVocabulary,
+  seriesPeak,
+  seriesTotal,
   toggleTrendMetric,
 } from '../performance-analytics'
 import { LAUNCH_CATEGORY, OPTIMIZATION_CATEGORY } from '../types'
@@ -415,5 +420,110 @@ describe('actionLabel', () => {
     expect(actionLabel('Keyword Harvesting')).toBe('关键词收割（KH）')
     expect(actionLabel('Budget Optimization')).toBe('预算优化')
     expect(actionLabel('Something New')).toBe('Something New')
+  })
+})
+
+describe('actionTrendDays', () => {
+  const activity = [
+    { date: '2026-09-01', spCampaignsCreated: 3, sbCampaignsCreated: 1, sdCampaignsCreated: 0, spTargetingsCreated: 20, bidsOptimized: 100 },
+    { date: '2026-09-03', spCampaignsCreated: 2, spTargetingsCreated: 5, bidsOptimized: 50 },
+  ]
+  const money = [
+    { date: '2026-09-01', adSpend: 100, adSales: 400 },
+    { date: '2026-09-02', adSpend: 30, adSales: 100 },
+  ]
+
+  it('merges the counters and the money onto the same day', () => {
+    const days = actionTrendDays(activity, money, '2026-09-01', '2026-09-03')
+    expect(days.map(d => d.date)).toEqual(['2026-09-01', '2026-09-02', '2026-09-03'])
+    expect(days[0].campaignsCreated).toBe(4)
+    expect(days[0].targetingsCreated).toBe(20)
+    expect(days[0].bidsOptimized).toBe(100)
+    expect(days[0].adSpend).toBe(100)
+  })
+
+  it('zero-fills a day neither source covers rather than dropping it', () => {
+    // 09-02 has money but no counters; the reverse gap happens too.
+    const days = actionTrendDays(activity, money, '2026-09-01', '2026-09-03')
+    expect(days[1].campaignsCreated).toBe(0)
+    expect(days[1].adSpend).toBe(30)
+    expect(days[2].adSales).toBe(0)
+  })
+
+  it('takes ACoS on the summed day, not as an average of ratios', () => {
+    const days = actionTrendDays(activity, money, '2026-09-01', '2026-09-03')
+    expect(days[0].acos).toBeCloseTo(25) // 100 / 400
+    expect(days[1].acos).toBeCloseTo(30) // 30 / 100
+    expect(days[2].acos).toBe(0) // no sales, not NaN
+  })
+
+  it('ignores rows outside the range', () => {
+    const days = actionTrendDays(
+      [{ date: '2026-08-31', spCampaignsCreated: 99 }],
+      [],
+      '2026-09-01',
+      '2026-09-02',
+    )
+    expect(days).toHaveLength(2)
+    expect(seriesTotal(days, 'campaignsCreated')).toBe(0)
+  })
+})
+
+describe('actionTrendLeftMetrics', () => {
+  const days = actionTrendDays([], [], '2026-09-01', '2026-09-02')
+
+  it('offers the launch counters that produced something', () => {
+    const withData = actionTrendDays([{ date: '2026-09-01', spCampaignsCreated: 5, spTargetingsCreated: 9 }], [], '2026-09-01', '2026-09-02')
+    expect(actionTrendLeftMetrics(LAUNCH_CATEGORY, withData).map(m => m.key)).toEqual(['campaignsCreated', 'targetingsCreated'])
+  })
+
+  it('never offers ad groups, which the data cannot distinguish from campaigns', () => {
+    const withData = actionTrendDays([{ date: '2026-09-01', spCampaignsCreated: 5 }], [], '2026-09-01', '2026-09-02')
+    expect(actionTrendLeftMetrics(LAUNCH_CATEGORY, withData).map(m => m.key)).not.toContain('adGroupsCreated')
+  })
+
+  it('drops a counter this action never writes, instead of drawing a flat line', () => {
+    // A Bid Optimization page has no budget/placement optimisations at all.
+    const bidsOnly = actionTrendDays([{ date: '2026-09-01', bidsOptimized: 42 }], [], '2026-09-01', '2026-09-02')
+    expect(actionTrendLeftMetrics(OPTIMIZATION_CATEGORY, bidsOnly).map(m => m.key)).toEqual(['bidsOptimized'])
+  })
+
+  it('offers nothing while the action category is still unknown', () => {
+    expect(actionTrendLeftMetrics('', days)).toEqual([])
+    expect(actionTrendLeftMetrics(undefined, days)).toEqual([])
+  })
+})
+
+describe('actionTrendFactFor', () => {
+  it('maps every launch action to its launched-campaign fact', () => {
+    expect(actionTrendFactFor('Cyber Minigun')).toEqual({
+      fact: 'performance_l2_schedules_launched_campaigns_cmg_fact',
+      column: 'launched_cmg_schedule_id',
+    })
+    expect(actionTrendFactFor('Keyword Harvesting')?.column).toBe('launched_kh_schedule_id')
+  })
+
+  it('maps every optimisation action to its managing-campaign fact', () => {
+    expect(actionTrendFactFor('Bid Optimization')?.fact).toBe('performance_l2_schedules_managing_campaigns_bid_opt_fact')
+    expect(actionTrendFactFor('Placement Optimization')?.column).toBe('managing_placement_opt_schedule_id')
+  })
+
+  it('returns nothing for an action with no fact, rather than guessing one', () => {
+    expect(actionTrendFactFor('Something Else')).toBeUndefined()
+  })
+})
+
+describe('seriesPeak', () => {
+  it('finds the busiest day and reports it with its date', () => {
+    const days = actionTrendDays([
+      { date: '2026-09-01', spCampaignsCreated: 5 },
+      { date: '2026-09-02', spCampaignsCreated: 31 },
+    ], [], '2026-09-01', '2026-09-02')
+    expect(seriesPeak(days, 'campaignsCreated')).toEqual({ date: '2026-09-02', value: 31 })
+  })
+
+  it('reports no peak date for a measure with no data', () => {
+    const days = actionTrendDays([], [], '2026-09-01', '2026-09-01')
+    expect(seriesPeak(days, 'campaignsCreated')).toEqual({ date: '', value: 0 })
   })
 })

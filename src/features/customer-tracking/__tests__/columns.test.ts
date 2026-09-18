@@ -3,13 +3,17 @@ import type { ColumnDef } from '@tanstack/vue-table'
 import { createTable, getCoreRowModel, getSortedRowModel } from '@tanstack/vue-table'
 import { describe, expect, it } from 'vitest'
 
+import { TooltipProvider } from '@/components/ui/tooltip'
+
 import type { ColumnSpec, ColumnType } from '../types'
 
 import {
   ACCOUNT_COLUMNS,
   ACCOUNT_PROFILE_COLUMNS,
   ADS_COLUMNS,
-  AGENT_PROFILE_COLUMNS,
+  AGENT_ORG_PROFILE_COLUMNS,
+  AGENT_ORG_TOOL_COLUMNS,
+  AGENT_TOOL_ORG_COLUMNS,
   CAMPAIGN_COLUMNS,
   cellDisplay,
   CHAT_COLUMNS,
@@ -23,11 +27,9 @@ import {
   PERFORMANCE_SCHEDULE_COLUMNS,
   perfScheduleColumns,
   PROFILE_COLUMNS,
-  PROFILE_TOOL_COLUMNS,
   SCHEDULE_COLUMNS,
   SUB_ACCOUNT_COLUMNS,
   TOOL_COLUMNS,
-  TOOL_PROFILE_COLUMNS,
 } from '../columns'
 import { connectionLabel, dateValue, needles, sortValue, splitSeries, splitTotal, tupleMetric } from '../values'
 
@@ -42,11 +44,11 @@ const ALL_SETS: [string, readonly ColumnSpec[]][] = [
   ['LAUNCH_SCHEDULE_COLUMNS', LAUNCH_SCHEDULE_COLUMNS],
   ['LAUNCH_CAMPAIGN_COLUMNS', LAUNCH_CAMPAIGN_COLUMNS],
   ['OPTIMIZATION_CAMPAIGN_COLUMNS', OPTIMIZATION_CAMPAIGN_COLUMNS],
-  ['AGENT_PROFILE_COLUMNS', AGENT_PROFILE_COLUMNS],
+  ['AGENT_ORG_PROFILE_COLUMNS', AGENT_ORG_PROFILE_COLUMNS],
   ['TOOL_COLUMNS', TOOL_COLUMNS],
-  ['PROFILE_TOOL_COLUMNS', PROFILE_TOOL_COLUMNS],
+  ['AGENT_ORG_TOOL_COLUMNS', AGENT_ORG_TOOL_COLUMNS],
   ['CHAT_COLUMNS', CHAT_COLUMNS],
-  ['TOOL_PROFILE_COLUMNS', TOOL_PROFILE_COLUMNS],
+  ['AGENT_TOOL_ORG_COLUMNS', AGENT_TOOL_ORG_COLUMNS],
   ['PERFORMANCE_SCHEDULE_COLUMNS', PERFORMANCE_SCHEDULE_COLUMNS],
   ['PERF_PROFILE_COLUMNS', PERF_PROFILE_COLUMNS],
   ['PERF_SCHEDULE_COLUMNS', PERF_SCHEDULE_COLUMNS],
@@ -68,6 +70,21 @@ const VALID_TYPES: ColumnType[] = [
 ]
 
 const build = (specs: readonly ColumnSpec[]) => makeColumns(specs, { navigate: () => {} })
+
+/**
+ * Which cell renderer a column hands back, without rendering it.
+ *
+ * Enough to tell a plain span from the hover-preview wrapper, and it avoids mounting the
+ * tooltip's portal just to assert one is there.
+ */
+function cellVNode(specs: readonly ColumnSpec[], id: string, value: unknown, options: { previewKeys?: string[] } = {}) {
+  const column = makeColumns(specs, { navigate: () => {}, ...options }).find(c => c.id === id) as ColumnDef<any>
+  return (column.cell as any)({ row: { original: { [id]: value } } })
+}
+
+function cellType(specs: readonly ColumnSpec[], id: string, value: unknown, options: { previewKeys?: string[] } = {}) {
+  return cellVNode(specs, id, value, options)?.type
+}
 const colOf = (specs: readonly ColumnSpec[], id: string) => build(specs).find(c => c.id === id) as ColumnDef<any>
 
 const COLUMN_SIZING_INFO = {
@@ -268,6 +285,33 @@ describe('column widths', () => {
     }
   })
 
+  it('sizes the identity column for a whole name, not a clipped one', () => {
+    // Every table here leads with its identity column (name / organization / tool / action),
+    // and the page passes that key as nameKey. It used to render in a hard-coded 180px box
+    // that clipped organization names by 2px and a 276px tool name by a third.
+    for (const [name, specs] of ALL_SETS) {
+      const columns = makeColumns(specs, { navigate: () => {}, nameKey: specs[0][0] })
+      expect(columns[0].size, name).toBeGreaterThanOrEqual(320)
+      expect(columns[0].maxSize, name).toBeGreaterThanOrEqual(720)
+    }
+  })
+
+  it('widens only the identity column, leaving the others on their type default', () => {
+    const withoutIdentity = makeColumns(TOOL_COLUMNS, { navigate: () => {} })
+    expect(withoutIdentity[0].size).toBe(168) // the tool column's own rule, untouched
+    const withIdentity = makeColumns(TOOL_COLUMNS, { navigate: () => {}, nameKey: 'tool' })
+    expect(withIdentity[0].size).toBe(320)
+    expect(withIdentity[1].size).toBe(124) // Orgs Using stays a number column
+  })
+
+  it('never truncates the identity cell', () => {
+    const vnode = cellVNode(CHAT_COLUMNS, 'name', '宁波豪雅进出口集团有限公司')
+    expect(vnode.props.class).not.toContain('truncate')
+    expect(vnode.props.class).toContain('whitespace-normal')
+    // The full value stays reachable on hover even when a name is longer than its column.
+    expect(vnode.props.title).toBe('宁波豪雅进出口集团有限公司')
+  })
+
   it('keeps every bound finite, so a column can never be dragged away entirely', () => {
     for (const [name, specs] of ALL_SETS) {
       for (const [key] of specs) {
@@ -395,5 +439,26 @@ describe('value helpers', () => {
   it('splits list-filter input into normalised needles', () => {
     expect(needles(['Bid, Budget'])).toEqual(['bid', 'budget'])
     expect(needles([' a ', '', 'b'])).toEqual(['a', 'b'])
+  })
+})
+describe('hover preview', () => {
+  const long = '第一条消息\n第二行\n第三行'
+
+  it('wraps the conversation text columns in a tooltip', () => {
+    expect(cellType(CHAT_COLUMNS, 'first', long, { previewKeys: ['first', 'summary'] })).toBe(TooltipProvider)
+    expect(cellType(CHAT_COLUMNS, 'summary', long, { previewKeys: ['first', 'summary'] })).toBe(TooltipProvider)
+  })
+
+  it('leaves the other chat columns as plain cells', () => {
+    // The preview is opted in per column, so a sub account or a date stays a plain cell.
+    expect(cellType(CHAT_COLUMNS, 'sub', 'Account 1', { previewKeys: ['first', 'summary'] })).toBe('span')
+  })
+
+  it('previews nothing when the table does not ask for it', () => {
+    expect(cellType(CHAT_COLUMNS, 'first', long)).toBe('span')
+  })
+
+  it('renders an empty conversation cell as a blank marker instead of a tooltip', () => {
+    expect(cellType(CHAT_COLUMNS, 'summary', null, { previewKeys: ['summary'] })).toBe('span')
   })
 })

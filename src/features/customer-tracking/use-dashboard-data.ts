@@ -1,5 +1,5 @@
 import {
-  avg,
+  and,
   cast,
   coalesce,
   column,
@@ -25,10 +25,13 @@ import { ref, watch } from 'vue'
 import { useAxios } from '@/composables/use-axios'
 import { isArrowTableLoaded, isDatasetLoaded, loadArrowDataset, loadDataset, runQuery } from '@/services/mosaic'
 
-import type { AttributionRow, FirstTouchRow } from './performance-analytics'
-import type { AdsAccount, AgentChat, Campaign, Organization, PerfProfile, PerfSchedule, Profile, Schedule, SubAccount, ToolStat } from './types'
+import type { ToolPairRow } from './agent-analytics'
+import type { ActionTrendActivityRow, ActionTrendMoneyRow, AttributionRow, FirstTouchRow } from './performance-analytics'
+import type { AdsAccount, AgentChat, AgentOrgProfileStat, AgentOrgToolStat, AgentToolOrgStat, AgentToolTrendRow, Campaign, Organization, PerfProfile, PerfSchedule, Profile, Schedule, SubAccount, ToolStat } from './types'
 
+import { successRate, withToolsUsed } from './agent-analytics'
 import { useFilterContext } from './filter-context'
+import { actionTrendFactFor } from './performance-analytics'
 import { LAUNCH_CATEGORY } from './types'
 
 export interface DatasetVersion {
@@ -97,6 +100,10 @@ function hashIds(ids: readonly string[]): string {
 const col = (name: string, table?: string) => column(name, table)
 function dateRange(fromDate: string, toDate: string, table?: string) {
   return isBetween(col('event_date', table), [literal(fromDate), literal(toDate)])
+}
+/** Same window, for the datasets whose date column is not called `event_date`. */
+function datesIn(columnName: string, fromDate: string, toDate: string, table?: string) {
+  return isBetween(col(columnName, table), [literal(fromDate), literal(toDate)])
 }
 function rate100(num: ReturnType<typeof column>, den: ReturnType<typeof column>) {
   return cond(gt(den, 0), mul(div(num, den), 100), 0)
@@ -488,61 +495,222 @@ function schedulesQuery(fromDate: string, toDate: string): Query {
   })
 }
 
-function toolStatsQuery(fromDate: string, toDate: string): Query {
-  return Query.from('agent_events')
+/**
+ * The Agent page's org + profile roll-up: one row per (organization, profile).
+ *
+ * The export already carries the org/profile names, the marketplace and the entity,
+ * so identity is not joined in from anywhere - and it is the only source of the chat
+ * count, which lives nowhere else.
+ */
+function agentOrgProfileQuery(fromDate: string, toDate: string): Query {
+  return Query.from('agent_analytics_l1_org')
     .select({
-      tool: col('tool'),
+      orgId: col('org_id'),
+      organization: col('org_name'),
+      amazonProfileId: col('amazon_profile_id'),
+      name: col('amazon_profile_name'),
+      marketplace: col('marketplace'),
+      entity: col('entity'),
+      chats: sum(col('agent_chat_threads')),
+      toolCalls: sum(col('tool_calls')),
+      lastActivity: cast(max(col('last_agent_activity')), 'VARCHAR'),
+    })
+    .where(datesIn('date', fromDate, toDate))
+    .groupby(col('org_id'), col('org_name'), col('amazon_profile_id'), col('amazon_profile_name'), col('marketplace'), col('entity'))
+}
+
+/**
+ * Distinct tools per (organization, profile) over the range.
+ *
+ * The roll-up counts tools per *day*, so summing it would count a tool once for every
+ * day it was used. The distinct count only exists in the tool fact, so it is fetched
+ * separately and merged by key on the client - which also keeps the rows whose profile
+ * is empty, where a SQL join on the profile id would match nothing.
+ */
+function agentToolsUsedQuery(fromDate: string, toDate: string): Query {
+  return Query.from('agent_analytics_shared_tools')
+    .select({
+      orgId: col('org_id'),
+      amazonProfileId: col('amazon_profile_id'),
+      toolsUsed: count(col('tool_name')).distinct(),
+    })
+    .where(datesIn('date', fromDate, toDate))
+    .groupby(col('org_id'), col('amazon_profile_id'))
+}
+
+/**
+ * Calls against active days per (organization, profile).
+ *
+ * The roll-up collapses the date, and a distribution question needs the date back: an
+ * organization that makes 200 calls in one day is a different finding from one that
+ * makes 10 a day for three weeks, and the total alone cannot tell them apart.
+ */
+function agentUsageIntensityQuery(fromDate: string, toDate: string): Query {
+  return Query.from('agent_analytics_l1_org')
+    .select({
+      orgId: col('org_id'),
+      organization: col('org_name'),
+      amazonProfileId: col('amazon_profile_id'),
+      profile: col('amazon_profile_name'),
+      calls: sum(col('tool_calls')),
+      activeDays: count(cond(gt(col('tool_calls'), 0), col('date'), null)).distinct(),
+    })
+    .where(datesIn('date', fromDate, toDate))
+    .groupby(col('org_id'), col('org_name'), col('amazon_profile_id'), col('amazon_profile_name'))
+}
+
+/** One row per (tool, organization): the grain the adoption matrix is built from. */
+function agentToolPairsQuery(fromDate: string, toDate: string): Query {
+  return Query.from('agent_analytics_shared_tools')
+    .select({
+      tool: col('tool_name'),
+      orgId: col('org_id'),
+      calls: sum(col('tool_calls')),
+      activeDays: count(col('date')).distinct(),
+    })
+    .where(datesIn('date', fromDate, toDate))
+    .groupby(col('tool_name'), col('org_id'))
+}
+
+/**
+ * Every organization that has ever used the agent, for the adoption rate.
+ *
+ * Deliberately unfiltered by date: the denominator is "organizations that onboarded the
+ * agent", so it must not shrink with the range - otherwise a one-week range would report
+ * a 100% adoption rate by construction.
+ */
+function agentAllOrgsQuery(): Query {
+  return Query.from('agent_analytics_l1_org').select({ orgs: count(col('org_id')).distinct() })
+}
+
+/** One row per tool over the range, across every organization. */
+function agentToolStatsQuery(fromDate: string, toDate: string): Query {
+  return Query.from('agent_analytics_shared_tools')
+    .select({
+      tool: col('tool_name'),
+      orgsUsing: count(col('org_id')).distinct(),
       profilesUsing: count(col('amazon_profile_id')).distinct(),
-      calls: sum(col('calls')),
-      lastCalled: max(col('event_date')),
-      success: round(avg(col('success')), 1),
-      errors: sum(col('errors')),
+      calls: sum(col('tool_calls')),
+      lastCalled: cast(max(col('last_used')), 'VARCHAR'),
+      successCalls: sum(col('success_calls')),
+      errors: sum(col('error_calls')),
     })
-    .where(dateRange(fromDate, toDate))
-    .groupby(col('tool'))
+    .where(datesIn('date', fromDate, toDate))
+    .groupby(col('tool_name'))
 }
 
-function agentChatsQuery(): Query {
-  return Query.from('agent_chats').select({
-    name: col('name'),
-    date: col('date'),
-    sub: col('sub'),
-    first: col('first'),
-    summary: col('summary'),
-  })
-}
-
-function agentProfileQuery(fromDate: string, toDate: string): Query {
-  const ae = Query.from('agent_events')
+/**
+ * The tools one organization used, at tool x sub account x profile grain.
+ *
+ * The company id travels with the name: the charts above this table aggregate by profile,
+ * and a name is not an identity (two profiles in one organization can share one).
+ */
+function agentOrgToolQuery(orgId: number, fromDate: string, toDate: string): Query {
+  return Query.from('agent_analytics_shared_tools')
     .select({
-      amazon_profile_id: col('amazon_profile_id'),
-      calls: sum(col('calls')),
-      tools_used: count(col('tool')).distinct(),
-      last_activity: max(col('event_date')),
+      tool: col('tool_name'),
+      subAccount: col('sub_account_name'),
+      amazonProfileId: col('amazon_profile_id'),
+      name: col('amazon_profile_name'),
+      // The same profile name repeats across marketplaces inside one organization, and
+      // the chart's axis labels truncate, so the marketplace is what tells two apart.
+      marketplace: col('marketplace'),
+      calls: sum(col('tool_calls')),
+      lastCalled: cast(max(col('last_used')), 'VARCHAR'),
+      successCalls: sum(col('success_calls')),
+      errors: sum(col('error_calls')),
     })
-    .where(dateRange(fromDate, toDate))
-    .groupby(col('amazon_profile_id'))
-  const pd = Query.from('profile_daily')
-    .select({ amazon_profile_id: col('amazon_profile_id'), chats: sum(col('chats')) })
-    .where(dateRange(fromDate, toDate))
-    .groupby(col('amazon_profile_id'))
-  return Query.from(
-    join(
-      join(from('profiles', 'p'), new FromClauseNode(ae, 'ae'), { type: 'LEFT', on: eq(col('amazon_profile_id', 'ae'), col('amazon_profile_id', 'p')) }),
-      new FromClauseNode(pd, 'pd'),
-      { type: 'LEFT', on: eq(col('amazon_profile_id', 'pd'), col('amazon_profile_id', 'p')) },
-    ),
-  ).select({
-    amazonProfileId: col('amazon_profile_id', 'p'),
-    name: col('name', 'p'),
-    marketplace: col('marketplace', 'p'),
-    entity: col('entity', 'p'),
-    organization: col('organization', 'p'),
-    chats: coalesce(col('chats', 'pd'), 0),
-    toolCalls: coalesce(col('calls', 'ae'), 0),
-    toolsUsed: coalesce(col('tools_used', 'ae'), 0),
-    lastActivity: col('last_activity', 'ae'),
-  })
+    .where(and(datesIn('date', fromDate, toDate), eq(col('org_id'), literal(orgId))))
+    .groupby(col('tool_name'), col('sub_account_name'), col('amazon_profile_id'), col('amazon_profile_name'), col('marketplace'))
+}
+
+/** Which organizations use one tool, at organization x profile grain. */
+function agentToolOrgQuery(toolName: string, fromDate: string, toDate: string): Query {
+  return Query.from('agent_analytics_shared_tools')
+    .select({
+      orgId: col('org_id'),
+      organization: col('org_name'),
+      name: col('amazon_profile_name'),
+      // The table shows the marketplace, so it has to be selected *and* grouped by - a
+      // column that is only named in the column set renders as an empty cell.
+      marketplace: col('marketplace'),
+      calls: sum(col('tool_calls')),
+      lastCalled: cast(max(col('last_used')), 'VARCHAR'),
+      successCalls: sum(col('success_calls')),
+      errors: sum(col('error_calls')),
+    })
+    .where(and(datesIn('date', fromDate, toDate), eq(col('tool_name'), literal(toolName))))
+    .groupby(col('org_id'), col('org_name'), col('amazon_profile_name'), col('marketplace'))
+}
+
+/**
+ * One action's day-by-day counters, per schedule.
+ *
+ * The per-schedule grain is what makes the chart a cross-filter: the page keeps the rows
+ * whose schedule survived the table filter and re-aggregates them in the browser, so a
+ * filter on the table redraws the chart without another lakehouse round trip. It is also
+ * small - ~4k rows for a month across every action - so loading it once per range and
+ * slicing it per action is cheaper than a query per action.
+ */
+function actionActivityDailyQuery(fromDate: string, toDate: string): Query {
+  return Query.from('performance_l2_schedules_fact')
+    .select({
+      date: cast(col('date'), 'VARCHAR'),
+      scheduleId: col('schedule_id'),
+      bidsOptimized: sum(col('bids_optimized')),
+      budgetsOptimized: sum(col('budgets_optimized')),
+      placementsOptimized: sum(col('placements_optimized')),
+      spCampaignsCreated: sum(col('sp_campaigns_created')),
+      sbCampaignsCreated: sum(col('sb_campaigns_created')),
+      sdCampaignsCreated: sum(col('sd_campaigns_created')),
+      spTargetingsCreated: sum(col('sp_targetings_created')),
+      sbTargetingsCreated: sum(col('sb_targetings_created')),
+      sdTargetingsCreated: sum(col('sd_targetings_created')),
+    })
+    .where(isBetween(col('date'), [literal(fromDate), literal(toDate)]))
+    .groupby(col('date'), col('schedule_id'))
+}
+
+/**
+ * One action's campaigns day by day: the money side of the trend.
+ *
+ * Which fact to read is decided by the action on screen (the export materialises one file
+ * per action type), so a page that never opens that action never downloads it.
+ */
+function actionTrendMoneyQuery(fact: string, scheduleColumn: string, fromDate: string, toDate: string, profileId?: string): Query {
+  const range = isBetween(col('date'), [literal(fromDate), literal(toDate)])
+  return Query.from(fact)
+    .select({
+      date: cast(col('date'), 'VARCHAR'),
+      scheduleId: col(scheduleColumn),
+      adSpend: sum(col('ad_spend')),
+      adSales: sum(col('ad_sales')),
+    })
+    .where(profileId ? and(range, eq(col('amazon_profile_id'), literal(profileId))) : range)
+    .groupby(col('date'), col(scheduleColumn))
+}
+
+/**
+ * One tool's usage per day: the trend chart's input.
+ *
+ * Volume and breadth are read together on purpose. A tool can grow because more
+ * organizations adopt it or because the same organizations call it harder, and the call
+ * total alone cannot tell those apart.
+ *
+ * Days the tool was never called are absent here (no rows); the caller zero-fills them
+ * against the range, because a missing bar otherwise reads as "that day did not exist"
+ * rather than "nobody used it".
+ */
+function agentToolTrendQuery(toolName: string, fromDate: string, toDate: string): Query {
+  return Query.from('agent_analytics_shared_tools')
+    .select({
+      date: cast(col('date'), 'VARCHAR'),
+      calls: sum(col('tool_calls')),
+      orgs: count(col('org_id')).distinct(),
+      profiles: count(col('amazon_profile_id')).distinct(),
+    })
+    .where(and(datesIn('date', fromDate, toDate), eq(col('tool_name'), literal(toolName))))
+    .groupby(col('date'))
 }
 
 // Accounts L2 'ads_account' wide table (dim + fact merged, one row per ads account x date).
@@ -641,23 +809,14 @@ export interface LaunchOutput {
   campaignsLaunched: number
 }
 
-export interface AgentProfileStat {
-  amazonProfileId: string
-  name: string
-  marketplace: string
-  entity: string
-  organization: string
-  chats: number
-  toolCalls: number
-  toolsUsed: number
-  lastActivity: string | null
-}
-
 export function useDashboardData() {
   const { dateRange } = useFilterContext()
   const ready = ref(false)
   const loading = ref(false)
   const campaignsLoading = ref(false)
+  const agentChatsLoading = ref(false)
+  /** The DuckDB relation holding the conversations currently on screen. */
+  const agentChatsTable = ref('')
   const analyticsLoading = ref(false)
   const error = ref<string | null>(null)
   /**
@@ -681,8 +840,24 @@ export function useDashboardData() {
   const campaigns = ref<Campaign[]>([])
   const schedules = ref<Schedule[]>([])
   const toolStats = ref<ToolStat[]>([])
-  const agentChats = ref<AgentChat[]>([])
-  const agentProfileStats = ref<AgentProfileStat[]>([])
+  const agentOrgProfiles = ref<AgentOrgProfileStat[]>([])
+  const agentOrgTools = ref<AgentOrgToolStat[]>([])
+  const agentToolOrgs = ref<AgentToolOrgStat[]>([])
+  /** (organization, profile) usage with the active days behind it, for the scatter. */
+  const agentUsageRows = ref<{ orgId: string, organization: string, profile: string, calls: number, activeDays: number }[]>([])
+  /** (tool, organization) usage, the grain the adoption matrix is built from. */
+  const agentToolPairs = ref<ToolPairRow[]>([])
+  /** Organizations that have ever used the agent: the adoption rate's denominator. */
+  const agentAllOrgs = ref(0)
+  /** One tool's per-day calls, organizations and profiles; the trend chart's rows. */
+  const agentToolTrend = ref<AgentToolTrendRow[]>([])
+  const agentOrgChats = ref<AgentChat[]>([])
+  /**
+   * Which organization / tool the Agent L2 pages are scoped to, taken from the route
+   * by `loadPage`. The scoped queries read it, so a page that is opened before the
+   * scope is known returns nothing rather than the whole book of business.
+   */
+  const agentScope = ref<{ orgId: number, tool: string }>({ orgId: Number.NaN, tool: '' })
   const adsAccounts = ref<AdsAccount[]>([])
   const subAccounts = ref<SubAccount[]>([])
   const performanceProfiles = ref<PerfProfile[]>([])
@@ -697,6 +872,12 @@ export function useDashboardData() {
    */
   const dailyProfileId = ref<string | null>(null)
   const launchOutput = ref<LaunchOutput[]>([])
+  /** Per (day, schedule) counters for the L2 action trend's left axis. */
+  const actionActivityRows = ref<ActionTrendActivityRow[]>([])
+  /** Per (day, schedule) money for the current action's campaigns - the right axis. */
+  const actionTrendMoneyRows = ref<ActionTrendMoneyRow[]>([])
+  /** Which (action, profile scope, range) the money rows above belong to. */
+  const actionTrendLoadedFor = ref('')
 
   async function loadOssDatasets(names: string[]): Promise<void> {
     // "Already loaded" is answered by the DuckDB layer, not by this component:
@@ -791,6 +972,30 @@ export function useDashboardData() {
       }))
   }
 
+  async function computeActionActivityDaily(): Promise<void> {
+    actionActivityRows.value = await runQuery<ActionTrendActivityRow>(
+      actionActivityDailyQuery(dateRange.value.from, dateRange.value.to),
+    )
+  }
+
+  /**
+   * Load the action's own campaign fact and read its per-day money.
+   *
+   * Called from the schedule page's loader rather than through the ref table, because
+   * which dataset to touch is decided by the action on screen while the ref table is
+   * static per page. Re-opening an action reuses the table DuckDB already holds.
+   */
+  async function loadActionTrendMoney(actionType: string, profileId?: string): Promise<void> {
+    const spec = actionTrendFactFor(actionType)
+    actionTrendMoneyRows.value = []
+    if (!spec)
+      return
+    await loadOssDatasets([spec.fact])
+    actionTrendMoneyRows.value = await runQuery<ActionTrendMoneyRow>(
+      actionTrendMoneyQuery(spec.fact, spec.column, dateRange.value.from, dateRange.value.to, profileId),
+    )
+  }
+
   async function computePerformanceDaily(): Promise<void> {
     performanceDailyRows.value = await runQuery<Record<string, unknown>>(
       performanceDailyQuery(dateRange.value.from, dateRange.value.to, dailyProfileId.value ?? undefined),
@@ -811,16 +1016,186 @@ export function useDashboardData() {
     schedules.value = await runQuery<Schedule>(schedulesQuery(dateRange.value.from, dateRange.value.to))
   }
 
+  /** The whole Agent page's org+profile roll-up, plus the distinct tools per row. */
+  async function computeAgentOrgProfiles(): Promise<void> {
+    const fromDate = dateRange.value.from
+    const toDate = dateRange.value.to
+    const [rows, tools] = await Promise.all([
+      runQuery<Record<string, unknown>>(agentOrgProfileQuery(fromDate, toDate)),
+      runQuery<Record<string, unknown>>(agentToolsUsedQuery(fromDate, toDate)),
+    ])
+    agentOrgProfiles.value = withToolsUsed(
+      rows.map(r => ({
+        orgId: String(r.orgId ?? ''),
+        organization: String(r.organization ?? ''),
+        amazonProfileId: r.amazonProfileId === null || r.amazonProfileId === undefined ? null : String(r.amazonProfileId),
+        name: r.name === null || r.name === undefined ? null : String(r.name),
+        marketplace: r.marketplace === null || r.marketplace === undefined ? null : String(r.marketplace),
+        entity: r.entity === null || r.entity === undefined ? null : String(r.entity),
+        chats: Number(r.chats ?? 0),
+        toolCalls: Number(r.toolCalls ?? 0),
+        toolsUsed: 0,
+        lastActivity: r.lastActivity === null || r.lastActivity === undefined ? null : String(r.lastActivity),
+      })),
+      tools.map(r => ({
+        orgId: String(r.orgId ?? ''),
+        amazonProfileId: r.amazonProfileId === null || r.amazonProfileId === undefined ? null : String(r.amazonProfileId),
+        toolsUsed: Number(r.toolsUsed ?? 0),
+      })),
+    )
+  }
+
   async function computeToolStats(): Promise<void> {
-    toolStats.value = await runQuery<ToolStat>(toolStatsQuery(dateRange.value.from, dateRange.value.to))
+    const rows = await runQuery<Record<string, unknown>>(agentToolStatsQuery(dateRange.value.from, dateRange.value.to))
+    toolStats.value = rows.map(r => ({
+      tool: String(r.tool ?? ''),
+      orgsUsing: Number(r.orgsUsing ?? 0),
+      profilesUsing: Number(r.profilesUsing ?? 0),
+      calls: Number(r.calls ?? 0),
+      lastCalled: r.lastCalled === null || r.lastCalled === undefined ? null : String(r.lastCalled),
+      // success/calls, per the agreed口径: an error the export never classified still
+      // counts against the tool rather than disappearing from the denominator.
+      success: successRate(Number(r.successCalls ?? 0), Number(r.calls ?? 0)),
+      errors: Number(r.errors ?? 0),
+    }))
   }
 
-  async function computeAgentChats(): Promise<void> {
-    agentChats.value = await runQuery<AgentChat>(agentChatsQuery())
+  async function computeAgentOrgTools(): Promise<void> {
+    const orgId = agentScope.value.orgId
+    if (!Number.isFinite(orgId)) {
+      agentOrgTools.value = []
+      return
+    }
+    const rows = await runQuery<Record<string, unknown>>(agentOrgToolQuery(orgId, dateRange.value.from, dateRange.value.to))
+    agentOrgTools.value = rows.map(r => ({
+      tool: String(r.tool ?? ''),
+      subAccount: String(r.subAccount ?? ''),
+      amazonProfileId: r.amazonProfileId === null || r.amazonProfileId === undefined ? null : String(r.amazonProfileId),
+      name: r.name === null || r.name === undefined ? null : String(r.name),
+      marketplace: r.marketplace === null || r.marketplace === undefined ? null : String(r.marketplace),
+      calls: Number(r.calls ?? 0),
+      lastCalled: r.lastCalled === null || r.lastCalled === undefined ? null : String(r.lastCalled),
+      success: successRate(Number(r.successCalls ?? 0), Number(r.calls ?? 0)),
+      errors: Number(r.errors ?? 0),
+    }))
   }
 
-  async function computeAgentProfileStats(): Promise<void> {
-    agentProfileStats.value = await runQuery<AgentProfileStat>(agentProfileQuery(dateRange.value.from, dateRange.value.to))
+  /**
+   * Load the conversation export for the current organization, on demand.
+   *
+   * The tab is what decides: the tools view is opened first and must not wait on a
+   * download it does not show. This is also the ref's compute, so once the tab has been
+   * opened a date change re-runs it - and finds the relation for the new range missing.
+   */
+  async function loadAgentChatsCore(): Promise<void> {
+    const orgId = agentScope.value.orgId
+    if (!Number.isFinite(orgId))
+      return
+    const from = dateRange.value.from
+    const to = dateRange.value.to
+    // One relation per (organization, range): an existing relation is reused rather
+    // than re-ingested, so the name has to carry both or a second organization would
+    // read the first one's conversations.
+    const table = `agent_chats_${hashIds([String(orgId), from, to])}`
+    agentChatsLoading.value = true
+    try {
+      if (!isArrowTableLoaded(table)) {
+        const params = new URLSearchParams({ org_id: String(orgId), from, to })
+        const bytes = await fetchArrow(`/customer-tracking/agent/chats?${params.toString()}`)
+        await loadArrowDataset(table, bytes)
+      }
+      agentChatsTable.value = table
+      await computeAgentOrgChats()
+      error.value = null
+    }
+    catch (e) {
+      error.value = `agentOrgChats: ${e instanceof Error ? e.message : String(e)}`
+    }
+    finally {
+      agentChatsLoading.value = false
+    }
+  }
+
+  /** Opening the tab: load it now, and keep it fresh from then on. */
+  async function loadAgentChats(): Promise<void> {
+    await loadAgentChatsCore()
+    computedRefs.add('agentOrgChats')
+  }
+
+  async function computeAgentOrgChats(): Promise<void> {
+    const table = agentChatsTable.value
+    if (!Number.isFinite(agentScope.value.orgId) || !table || !isArrowTableLoaded(table)) {
+      agentOrgChats.value = []
+      return
+    }
+    const rows = await runQuery<Record<string, unknown>>(`SELECT * FROM "${table}"`)
+    agentOrgChats.value = rows.map(r => ({
+      name: String(r.name ?? ''),
+      date: String(r.date ?? ''),
+      sub: String(r.sub ?? ''),
+      first: r.first === null || r.first === undefined ? '' : String(r.first),
+      summary: r.summary === null || r.summary === undefined ? '' : String(r.summary),
+    }))
+  }
+
+  async function computeAgentUsageIntensity(): Promise<void> {
+    const rows = await runQuery<Record<string, unknown>>(agentUsageIntensityQuery(dateRange.value.from, dateRange.value.to))
+    agentUsageRows.value = rows.map(r => ({
+      orgId: String(r.orgId ?? ''),
+      organization: String(r.organization ?? ''),
+      profile: r.profile === null || r.profile === undefined ? '' : String(r.profile),
+      calls: Number(r.calls ?? 0),
+      activeDays: Number(r.activeDays ?? 0),
+    }))
+  }
+
+  async function computeAgentToolPairs(): Promise<void> {
+    const rows = await runQuery<Record<string, unknown>>(agentToolPairsQuery(dateRange.value.from, dateRange.value.to))
+    agentToolPairs.value = rows.map(r => ({
+      tool: String(r.tool ?? ''),
+      orgId: String(r.orgId ?? ''),
+      calls: Number(r.calls ?? 0),
+      activeDays: Number(r.activeDays ?? 0),
+    }))
+  }
+
+  async function computeAgentAllOrgs(): Promise<void> {
+    const rows = await runQuery<Record<string, unknown>>(agentAllOrgsQuery())
+    agentAllOrgs.value = Number(rows[0]?.orgs ?? 0)
+  }
+
+  async function computeAgentToolOrgs(): Promise<void> {
+    const tool = agentScope.value.tool
+    if (!tool) {
+      agentToolOrgs.value = []
+      return
+    }
+    const rows = await runQuery<Record<string, unknown>>(agentToolOrgQuery(tool, dateRange.value.from, dateRange.value.to))
+    agentToolOrgs.value = rows.map(r => ({
+      orgId: String(r.orgId ?? ''),
+      organization: String(r.organization ?? ''),
+      name: r.name === null || r.name === undefined ? null : String(r.name),
+      marketplace: r.marketplace === null || r.marketplace === undefined ? null : String(r.marketplace),
+      calls: Number(r.calls ?? 0),
+      lastCalled: r.lastCalled === null || r.lastCalled === undefined ? null : String(r.lastCalled),
+      success: successRate(Number(r.successCalls ?? 0), Number(r.calls ?? 0)),
+      errors: Number(r.errors ?? 0),
+    }))
+  }
+
+  async function computeAgentToolTrend(): Promise<void> {
+    const tool = agentScope.value.tool
+    if (!tool) {
+      agentToolTrend.value = []
+      return
+    }
+    const rows = await runQuery<Record<string, unknown>>(agentToolTrendQuery(tool, dateRange.value.from, dateRange.value.to))
+    agentToolTrend.value = rows.map(r => ({
+      date: String(r.date ?? ''),
+      calls: Number(r.calls ?? 0),
+      orgs: Number(r.orgs ?? 0),
+      profiles: Number(r.profiles ?? 0),
+    }))
   }
 
   async function computeAdsAccounts(): Promise<void> {
@@ -967,16 +1342,14 @@ export function useDashboardData() {
    * Arrow; the browser only ever holds the (small) result.
    */
   /**
-   * Does this action have a first touch to measure? Only a campaign-launch action
-   * does not, because it never manages an existing campaign.
+   * The category of the action on screen, once the schedule dim has an opinion.
    *
-   * The answer lives in the schedule dim, which the page is loading in parallel and
-   * which may not have arrived yet: deciding too early sent the query on exactly the
-   * pages that cannot show it. The wait is bounded - the dim is a few MB the page
-   * needs anyway - and anything unknown keeps the query, because a missing card is
-   * recoverable and a missing number is not.
+   * The dim is loading in parallel and may not have arrived: deciding too early sent the
+   * first-touch query on exactly the pages that cannot show it. The wait is bounded - the
+   * dim is a few MB the page needs anyway - and `''` means "not known", which callers treat
+   * as "keep the query": a missing card is recoverable, a missing number is not.
    */
-  async function firstTouchAppliesTo(actionType: string, waitMs = 8000): Promise<boolean> {
+  async function actionCategoryOf(actionType: string, waitMs = 8000): Promise<string> {
     if (!performanceSchedules.value.length) {
       await new Promise<void>((resolve) => {
         const timer = setTimeout(finish, waitMs)
@@ -988,7 +1361,7 @@ export function useDashboardData() {
         }
       })
     }
-    return performanceSchedules.value.find(s => s.actionType === actionType)?.actionCategory !== LAUNCH_CATEGORY
+    return performanceSchedules.value.find(s => s.actionType === actionType)?.actionCategory ?? ''
   }
 
   async function loadScheduleAnalytics(actionType: string, profileId?: string, scheduleIds?: string[]): Promise<void> {
@@ -1027,12 +1400,28 @@ export function useDashboardData() {
     // attribution request, which is the slow one, starts straight away.
     analyticsLoading.value = true
     try {
-      const attributionPromise = postArrow('/customer-tracking/performance/attribution', body)
-      const wantsFirstTouch = await firstTouchAppliesTo(actionType)
+      // One dim read decides both questions. A launch action creates campaigns and never
+      // manages one, so it has no first touch to measure *and*, now that its charts are a
+      // single client-side trend, nothing on the page reads the attribution aggregate
+      // either - fetching it would be pure latency on the page's critical path.
+      const category = await actionCategoryOf(actionType)
+      const isLaunch = category === LAUNCH_CATEGORY
+      const wantsFirstTouch = !isLaunch
+      const wantsAttribution = !isLaunch
+      const attributionPromise = wantsAttribution
+        ? postArrow('/customer-tracking/performance/attribution', body)
+        : Promise.resolve(null)
       const firstTouchPromise = wantsFirstTouch
         ? postArrow('/customer-tracking/performance/first-touch', { ...body, window_days: FIRST_TOUCH_WINDOW_DAYS })
         : Promise.resolve(null)
-      const [attribution, firstTouch] = await Promise.all([attributionPromise, firstTouchPromise])
+      // The trend's money series rides along: it is its own dataset and its own query, and
+      // it does not depend on the schedule filter (that is applied in the browser), so it
+      // is keyed and cached separately.
+      const trendKey = `${actionType}|${profileId ?? 'all'}|${fromDate}|${toDate}`
+      const trendPromise = actionTrendLoadedFor.value === trendKey
+        ? Promise.resolve()
+        : loadActionTrendMoney(actionType, profileId).then(() => { actionTrendLoadedFor.value = trendKey })
+      const [attribution, firstTouch] = await Promise.all([attributionPromise, firstTouchPromise, trendPromise]).then(r => [r[0], r[1]] as const)
       // One physical table per filter scope, rather than replacing a shared
       // \`perf_attribution\`.
       //
@@ -1046,12 +1435,12 @@ export function useDashboardData() {
       // A scope's table outlives this component: coming back to a scope must reuse
       // it, both to avoid re-downloading and because re-ingesting into an existing
       // relation is the one path that behaved inconsistently.
-      if (!isArrowTableLoaded(attributionTable))
+      if (attribution && !isArrowTableLoaded(attributionTable))
         await loadArrowDataset(attributionTable, attribution)
       if (firstTouch && !isArrowTableLoaded(firstTouchTable))
         await loadArrowDataset(firstTouchTable, firstTouch)
       const [attributionRows, firstTouchRows] = await Promise.all([
-        runQuery<AttributionRow>(`SELECT * FROM "${attributionTable}"`),
+        wantsAttribution ? runQuery<AttributionRow>(`SELECT * FROM "${attributionTable}"`) : Promise.resolve([] as AttributionRow[]),
         wantsFirstTouch
           ? runQuery<FirstTouchRow>(`SELECT * FROM "${firstTouchTable}"`)
           : Promise.resolve([] as FirstTouchRow[]),
@@ -1076,9 +1465,22 @@ export function useDashboardData() {
     performanceProfiles: { datasets: ['performance_l1_profiles_dim', 'performance_l1_profiles_fact'], compute: computePerformanceProfiles },
     performanceSchedules: { datasets: ['performance_l2_schedules_dim', 'performance_l2_schedules_fact'], compute: computePerformanceSchedules },
     performanceDailyRows: { datasets: ['performance_l1_profiles_fact'], compute: computePerformanceDaily },
-    toolStats: { datasets: ['agent_events'], compute: computeToolStats },
-    agentChats: { datasets: ['agent_chats'], compute: computeAgentChats },
-    agentProfileStats: { datasets: ['profiles', 'agent_events', 'profile_daily'], compute: computeAgentProfileStats },
+    actionActivityDaily: { datasets: ['performance_l2_schedules_fact'], compute: computeActionActivityDaily },
+    agentOrgProfiles: { datasets: ['agent_analytics_l1_org', 'agent_analytics_shared_tools'], compute: computeAgentOrgProfiles },
+    agentUsageIntensity: { datasets: ['agent_analytics_l1_org'], compute: computeAgentUsageIntensity },
+    agentAllOrgs: { datasets: ['agent_analytics_l1_org'], compute: computeAgentAllOrgs },
+    toolStats: { datasets: ['agent_analytics_shared_tools'], compute: computeToolStats },
+    agentToolPairs: { datasets: ['agent_analytics_shared_tools'], compute: computeAgentToolPairs },
+    agentOrgTools: { datasets: ['agent_analytics_shared_tools'], compute: computeAgentOrgTools },
+    agentToolOrgs: { datasets: ['agent_analytics_shared_tools'], compute: computeAgentToolOrgs },
+    agentToolTrend: { datasets: ['agent_analytics_shared_tools'], compute: computeAgentToolTrend },
+    // The conversation export is 67MB; it is only loaded by the page that shows it.
+    // Declared for the range watcher to re-run once the tab has loaded it; it is *not*
+    // in PAGE_REFS, because loading it with the page would make the tools tab wait on a
+    // 67MB download it never shows.
+    // Its own loader: the conversations come from an endpoint that filters by
+    // organization, not from an OSS dataset this page downloads.
+    agentOrgChats: { datasets: [], compute: loadAgentChatsCore },
     adsAccounts: { datasets: ['accounts_l2_ads_account'], compute: computeAdsAccounts },
     subAccounts: { datasets: ['accounts_l2_sub_accounts'], compute: computeSubAccounts },
     launchOutput: { datasets: ['schedule_events', 'schedules'], compute: computeLaunchOutput },
@@ -1098,17 +1500,32 @@ export function useDashboardData() {
     'profile': ['performanceProfiles', 'performanceDailyRows', 'campaigns'],
     // The L2 schedule page keeps its own schedule rows (one per schedule) and pulls
     // the campaign-grain aggregates separately, keyed by action + profile scope.
-    'schedules': ['performanceProfiles', 'performanceSchedules'],
-    'agent': ['agentProfileStats', 'toolStats', 'agentChats'],
-    'agent-profile': ['agentProfileStats', 'agentChats', 'profiles'],
-    'tool-profiles': ['toolStats', 'profiles'],
+    'schedules': ['performanceProfiles', 'performanceSchedules', 'actionActivityDaily'],
+    'agent': ['agentOrgProfiles', 'agentUsageIntensity', 'agentAllOrgs', 'toolStats', 'agentToolPairs'],
+    'agent-org': ['agentOrgProfiles', 'agentOrgTools'],
+    'agent-tool-orgs': ['agentToolOrgs', 'agentToolTrend'],
   }
 
-  async function loadPage(page: string, profileId?: string): Promise<void> {
+  /**
+   * The refs whose contents depend on the *route* rather than only on the range.
+   *
+   * `computedRefs` is what keeps a page load from re-running every query it has ever
+   * run; a scoped ref must not be protected by it, or the previous organization's tools
+   * stay on screen after the route moves to the next one.
+   */
+  const SCOPED_REFS = ['agentOrgTools', 'agentOrgChats', 'agentToolOrgs', 'agentToolTrend']
+
+  async function loadPage(page: string, profileId?: string, agentRoute?: { orgId?: string, tool?: string }): Promise<void> {
     const refNames = PAGE_REFS[page] || []
     if (refNames.length === 0)
       return
+    for (const rn of SCOPED_REFS)
+      computedRefs.delete(rn)
     dailyProfileId.value = page === 'profile' ? profileId ?? null : null
+    agentScope.value = {
+      orgId: Number(agentRoute?.orgId ?? Number.NaN),
+      tool: agentRoute?.tool ? decodeURIComponent(agentRoute.tool) : '',
+    }
     ready.value = false
     loading.value = true
     error.value = null
@@ -1155,5 +1572,5 @@ export function useDashboardData() {
       void loadScheduleAnalytics(analyticsScope.value.actionType, analyticsScope.value.profileId, analyticsScope.value.scheduleIds)
   }, { deep: true })
 
-  return { ready, loading, campaignsLoading, analyticsLoading, error, loadPage, loadCampaigns, loadScheduleAnalytics, performanceProfiles, performanceSchedules, performanceDailyRows, perfAttribution, perfFirstTouch, organizations, profiles, accountProfilesData, campaigns, schedules, toolStats, agentChats, agentProfileStats, adsAccounts, subAccounts, launchOutput }
+  return { ready, loading, campaignsLoading, analyticsLoading, error, loadPage, loadCampaigns, loadScheduleAnalytics, performanceProfiles, performanceSchedules, performanceDailyRows, actionActivityRows, actionTrendMoneyRows, perfAttribution, perfFirstTouch, organizations, profiles, accountProfilesData, campaigns, schedules, toolStats, agentOrgProfiles, agentOrgTools, agentToolOrgs, agentToolTrend, agentOrgChats, agentUsageRows, agentToolPairs, agentAllOrgs, adsAccounts, subAccounts, launchOutput, loadAgentChats, agentChatsLoading }
 }

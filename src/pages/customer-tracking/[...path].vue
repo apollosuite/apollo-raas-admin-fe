@@ -6,7 +6,7 @@ import { watchDebounced } from '@vueuse/core'
 import { Search } from 'lucide-vue-next'
 import { computed, h, ref } from 'vue'
 
-import type { ActivityCounterKey, CompositionMetric } from '@/features/customer-tracking/performance-analytics'
+import type { ActivityCounterKey } from '@/features/customer-tracking/performance-analytics'
 
 import DataTable from '@/components/data-table/data-table.vue'
 import { generateVueTable } from '@/components/data-table/use-generate-vue-table'
@@ -19,10 +19,31 @@ import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
+  managedBook,
+  scaleSummary,
+  statusBreakdown,
+  statusRadialCaption,
+  statusRadialSlices,
+  topBySpend,
+} from '@/features/customer-tracking/account-analytics'
+import {
+  fillTrendDays,
+  medianOf,
+  rankWithTail,
+  repeatBuckets,
+  rollupBy,
+  toolAdoption,
+  trendSummary,
+  usageBuckets,
+  usageIntensity,
+} from '@/features/customer-tracking/agent-analytics'
+import {
   ACCOUNT_COLUMNS,
   ACCOUNT_PROFILE_COLUMNS,
   ADS_COLUMNS,
-  AGENT_PROFILE_COLUMNS,
+  AGENT_ORG_PROFILE_COLUMNS,
+  AGENT_ORG_TOOL_COLUMNS,
+  AGENT_TOOL_ORG_COLUMNS,
   CAMPAIGN_COLUMNS,
   CHAT_COLUMNS,
   DEFAULT_SORTS,
@@ -31,35 +52,41 @@ import {
   PERFORMANCE_SCHEDULE_COLUMNS,
   perfScheduleColumns,
   PROFILE_COLUMN,
-  PROFILE_TOOL_COLUMNS,
   SUB_ACCOUNT_COLUMNS,
   TOOL_COLUMNS,
-  TOOL_PROFILE_COLUMNS,
 } from '@/features/customer-tracking/columns'
+import ActionTrendChart from '@/features/customer-tracking/components/action-trend-chart.vue'
 import CampaignActionsCell from '@/features/customer-tracking/components/campaign-actions-cell.vue'
+import { chartTokens } from '@/features/customer-tracking/components/chart-theme'
 import GroupedBarChart from '@/features/customer-tracking/components/grouped-bar-chart.vue'
 import KpiChart from '@/features/customer-tracking/components/kpi-chart.vue'
+import ScatterChart from '@/features/customer-tracking/components/scatter-chart.vue'
+import StatTile from '@/features/customer-tracking/components/stat-tile.vue'
+import StatusRadialChart from '@/features/customer-tracking/components/status-radial-chart.vue'
 import TableToolbar from '@/features/customer-tracking/components/table-toolbar.vue'
 import TrackingChart from '@/features/customer-tracking/components/tracking-chart.vue'
+import TrendChart from '@/features/customer-tracking/components/trend-chart.vue'
 import { useFilterContext } from '@/features/customer-tracking/filter-context'
 import { formatMetric } from '@/features/customer-tracking/format'
 import { actionCn } from '@/features/customer-tracking/mock'
 import {
+  ACTION_TREND_RIGHT_METRICS,
+  actionTrendLeftMetrics,
   activityCounters,
   adProductLabel,
-  COMPOSITION_METRICS,
-  compositionSeries,
-  compositionShare,
+  actionTrendDays as buildActionTrendDays,
   DAILY_TREND_METRICS,
   dailySeries,
+  DEFAULT_ACTION_TREND_RIGHT,
   DEFAULT_TREND_METRICS,
   efficiencyByAdProduct,
   firstTouchSummary,
   SCHEDULE_ACTION_METRIC_LABEL,
   scheduleActionMix,
   scheduleRollup,
-  scheduleStatusBreakdown,
   segmentVocabulary,
+  seriesPeak,
+  seriesTotal,
 } from '@/features/customer-tracking/performance-analytics'
 import { LAUNCH_CATEGORY } from '@/features/customer-tracking/types'
 import { useColumnFilters } from '@/features/customer-tracking/use-column-filter'
@@ -67,14 +94,24 @@ import { FIRST_TOUCH_WINDOW_DAYS, useDashboardData } from '@/features/customer-t
 
 const route = useRoute(); const router = useRouter(); const search = ref(''); const status = ref('all')
 const { dateRange } = useFilterContext(); const dateRangeLabel = computed(() => `${dateRange.value.from} ~ ${dateRange.value.to}`)
-const { organizations, profiles, accountProfilesData, campaigns, toolStats, agentChats, agentProfileStats, adsAccounts, subAccounts, ready, error, loadPage, loadCampaigns, campaignsLoading, analyticsLoading, loadScheduleAnalytics, performanceProfiles, performanceSchedules, performanceDailyRows, perfAttribution, perfFirstTouch } = useDashboardData()
+const { organizations, accountProfilesData, campaigns, toolStats, agentOrgProfiles, agentUsageRows, agentToolPairs, agentAllOrgs, agentOrgTools, agentToolOrgs, agentToolTrend, agentOrgChats, adsAccounts, subAccounts, ready, error, loadPage, loadCampaigns, campaignsLoading, analyticsLoading, loadScheduleAnalytics, loadAgentChats, agentChatsLoading, performanceProfiles, performanceSchedules, performanceDailyRows, actionActivityRows, actionTrendMoneyRows, perfAttribution, perfFirstTouch } = useDashboardData()
 const path = computed(() => String((route.params as any).path || 'accounts').split('/').filter(Boolean))
-const page = computed(() => path.value[0] === 'accounts' && path.value[1] ? 'account-detail' : path.value[0] === 'performance' && path.value[1] === 'profile' && path.value[3] === 'schedules' ? 'schedules' : path.value[0] === 'performance' && path.value[1] === 'profile' ? 'profile' : path.value[0] === 'performance' && path.value[1] === 'schedules' ? 'schedules' : path.value[0] === 'agent' && path.value[1] === 'profile' ? 'agent-profile' : path.value[0] === 'agent' && path.value[1] === 'tool' ? 'tool-profiles' : path.value[0] || 'accounts')
+const page = computed(() => path.value[0] === 'accounts' && path.value[1] ? 'account-detail' : path.value[0] === 'performance' && path.value[1] === 'profile' && path.value[3] === 'schedules' ? 'schedules' : path.value[0] === 'performance' && path.value[1] === 'profile' ? 'profile' : path.value[0] === 'performance' && path.value[1] === 'schedules' ? 'schedules' : path.value[0] === 'agent' && path.value[1] === 'org' ? 'agent-org' : path.value[0] === 'agent' && path.value[1] === 'tool' ? 'agent-tool-orgs' : path.value[0] || 'accounts')
+/**
+ * The route scope of the two Agent L2 pages: the organization id, or the tool name.
+ * Both are read by the hook's scoped queries, so the page never renders one scope's
+ * numbers under another scope's heading.
+ */
+const agentRoute = computed(() => page.value === 'agent-org'
+  ? { orgId: path.value[2] }
+  : page.value === 'agent-tool-orgs'
+    ? { tool: path.value[2] }
+    : undefined)
 const campaignProfileId = computed(() => page.value === 'profile' || (page.value === 'schedules' && path.value[1] === 'profile') ? path.value[2] : undefined)
 // The catch-all page component is reused across routes, so free-text search must not survive
 // navigation — otherwise a term typed on L1 silently empties the L2 tables.
-watch(path, () => { search.value = ''; loadPage(page.value, campaignProfileId.value) }, { immediate: true })
-const account = computed(() => organizations.value.find(a => String(a.orgId) === String(path.value[1])) || organizations.value[0]); const profile = computed(() => profiles.value.find(p => p.amazonProfileId === path.value[2]) || profiles.value[0]); const action = computed(() => page.value === 'schedules' ? decodeURIComponent(path.value[path.value[1] === 'profile' ? 4 : 2] || '') : ''); const scopedProfileId = computed(() => page.value !== 'schedules' ? null : path.value[1] === 'profile' ? path.value[2] : null)
+watch(path, () => { search.value = ''; loadPage(page.value, campaignProfileId.value, agentRoute.value) }, { immediate: true })
+const account = computed(() => organizations.value.find(a => String(a.orgId) === String(path.value[1])) || organizations.value[0]); const action = computed(() => page.value === 'schedules' ? decodeURIComponent(path.value[path.value[1] === 'profile' ? 4 : 2] || '') : ''); const scopedProfileId = computed(() => page.value !== 'schedules' ? null : path.value[1] === 'profile' ? path.value[2] : null)
 /**
  * Identity for the Performance L2 profile page, from the page-level export.
  *
@@ -111,8 +148,8 @@ const title = computed(() => {
     case 'profile': return perfProfile.value?.name ?? path.value[2] ?? 'Performance'
     case 'schedules': return `${actionCn[action.value] || action.value} · Schedules`
     case 'agent': return 'Agent Analytics'
-    case 'agent-profile': return `${profile.value?.name ?? ''} · Profile Details`
-    case 'tool-profiles': return `Profiles using ${path.value[2] || ''}`
+    case 'agent-org': return `${agentOrgName.value || path.value[2] || ''} · Org Details`
+    case 'agent-tool-orgs': return `Orgs using ${agentToolName.value}`
     default: return 'Hanna Accounts'
   }
 })
@@ -135,20 +172,20 @@ const breadcrumbs = computed(() => {
       add(perfProfile.value?.name ?? scopedProfileId.value, `/customer-tracking/performance/profile/${scopedProfileId.value}`)
     add(`${actionCn[action.value] || action.value} Schedules`)
   }
-  else if (page.value === 'agent-profile') {
+  else if (page.value === 'agent-org') {
     add('Agent Analytics', '/customer-tracking/agent')
-    add(profile.value.name)
+    add(agentOrgName.value || path.value[2] || '')
   }
-  else if (page.value === 'tool-profiles') {
+  else if (page.value === 'agent-tool-orgs') {
     add('Agent Analytics', '/customer-tracking/agent')
-    add(`Profiles using ${path.value[2] || ''}`)
+    add(`Orgs using ${agentToolName.value}`)
   }
   else {
     add(page.value === 'agent' ? 'Agent Analytics' : page.value === 'performance' ? 'Performance' : 'Accounts')
   }
   return items
 })
-const tabDefaults: Record<string, string> = { 'account-detail': 'profiles', 'performance': 'profiles', 'schedules': 'schedules', 'agent': 'profiles', 'agent-profile': 'tools' }
+const tabDefaults: Record<string, string> = { 'account-detail': 'profiles', 'performance': 'profiles', 'schedules': 'schedules', 'agent': 'org', 'agent-org': 'tools' }
 
 // L1 — Performance. Every number and chart here is computed from the *filtered*
 // profile rows, so a filter on the table above feeds straight into the charts:
@@ -230,11 +267,7 @@ const isLaunchAction = computed(() => perfActionCategory.value === LAUNCH_CATEGO
  * campaigns, a launch page creates them. Same rows, different question.
  */
 const scheduleSegments = computed(() => segmentVocabulary(perfActionCategory.value))
-const scheduleStatusMix = computed(() => scheduleStatusBreakdown(perfScheduleTableRows.value))
 const scheduleActivity = computed(() => activityCounters(perfScheduleTableRows.value, perfActionCategory.value))
-// The chart takes {name, value}; the headline row looks counters up by their stable
-// key so translating a label can never empty it.
-const scheduleActivityChart = computed(() => scheduleActivity.value.map(a => ({ name: a.label, value: a.value })))
 const activityValue = (key: ActivityCounterKey) => scheduleActivity.value.find(a => a.key === key)?.value ?? 0
 /**
  * The headline counters, in the page's own words, keeping only the ones this action
@@ -249,12 +282,6 @@ const ACTIVITY_HEADLINE: readonly { key: ActivityCounterKey, label: string }[] =
   { key: 'targetingsCreated', label: 'Targetings Created' },
 ]
 const headlineCounters = computed(() => ACTIVITY_HEADLINE.filter(c => scheduleActivity.value.some(a => a.key === c.key)))
-const compositionMetric = ref<CompositionMetric>('ad_spend')
-const compositionData = computed(() => compositionSeries(perfAttribution.value, compositionMetric.value, scheduleSegments.value))
-const composition = computed(() => compositionShare(perfAttribution.value, compositionMetric.value))
-const compositionMetricLabel = computed(() => COMPOSITION_METRICS.find(m => m.key === compositionMetric.value)?.label ?? '广告花费')
-const compositionFormat = computed(() => isCurrencyForComposition.value ? 'currency' as const : 'number' as const)
-const isCurrencyForComposition = computed(() => compositionMetric.value === 'ad_spend' || compositionMetric.value === 'ad_sales')
 // Chart 3 is deliberately a fair fight: ACoS of the action's own campaigns against
 // the untouched baseline, per ad product. On this data our segment is *not* cheaper,
 // which is exactly why the value story rests on the within-campaign comparison below.
@@ -276,10 +303,29 @@ const firstTouchRates = computed(() => ({
 }))
 // The Agent page's tables respect the page search too: without this the search box
 // was inert here (and so were the charts that read these rows).
-const agentProfileRows = computed(() => agentProfileStats.value.filter(includesSearch))
-const toolRowsSource = computed(() => toolStats.value.filter(includesSearch))
-const chatRowsSource = computed(() => agentChats.value.filter(includesSearch))
-const toolProfileRows = computed(() => profiles.value.filter(includesSearch).slice(0, 8).map(p => ({ ...p, calls: 12 + p.chats, lastCalled: `${(p.chats % 5) + 1} days ago`, success: 90 + (p.chats % 8), errors: p.chats % 3 })))
+const agentOrgProfileRows = computed(() => agentOrgProfiles.value.filter(includesSearch))
+/**
+ * The tool table's rows: the aggregate per tool, carrying its adoption numbers so
+ * breadth, depth and retention can be read in the same row as the total.
+ */
+const toolRowsSource = computed(() => {
+  const adoption = new Map(toolAdoptionRows.value.map(entry => [entry.tool, entry]))
+  return toolStats.value.map((tool) => {
+    const extra = adoption.get(tool.tool)
+    return {
+      ...tool,
+      orgsUsing: extra?.orgs ?? tool.orgsUsing,
+      callsPerOrg: extra ? Math.round(extra.callsPerOrg * 10) / 10 : 0,
+      medianActiveDays: extra ? Math.round(extra.medianActiveDays * 10) / 10 : 0,
+    }
+  }).filter(includesSearch)
+})
+const orgToolRowsSource = computed(() => agentOrgTools.value.filter(includesSearch))
+const toolOrgRowsSource = computed(() => agentToolOrgs.value.filter(includesSearch))
+const chatRowsSource = computed(() => agentOrgChats.value.filter(includesSearch))
+/** The organization the page is about: its name comes from the rows, the id from the URL. */
+const agentOrgName = computed(() => agentOrgProfiles.value.find(r => String(r.orgId) === String(path.value[2]))?.organization ?? '')
+const agentToolName = computed(() => decodeURIComponent(path.value[2] ?? ''))
 const performanceScheduleBase = computed(() => scheduleRollup(performanceSchedules.value))
 // ---------------------------------------------------------------------------
 // One column set per table.
@@ -296,11 +342,11 @@ const accountSubColumns = SUB_ACCOUNT_COLUMNS
 const perfProfileColumns = PERF_PROFILE_COLUMNS
 const actionRollupColumns = PERFORMANCE_SCHEDULE_COLUMNS
 const campaignColumns = CAMPAIGN_COLUMNS
-const agentProfileColumns = AGENT_PROFILE_COLUMNS
+const agentOrgProfileColumns = AGENT_ORG_PROFILE_COLUMNS
 const toolColumns = TOOL_COLUMNS
-const profileToolColumns = PROFILE_TOOL_COLUMNS
+const orgToolColumns = AGENT_ORG_TOOL_COLUMNS
 const chatColumns = CHAT_COLUMNS
-const toolProfileColumns = TOOL_PROFILE_COLUMNS
+const toolOrgColumns = AGENT_TOOL_ORG_COLUMNS
 
 const { filters: accountFilters, filtered: accountRows } = useColumnFilters(filteredAccounts, accountColumns)
 const { filters: accountAdFilters, filtered: accountAdRows } = useColumnFilters(accountAds, accountAdColumns)
@@ -309,37 +355,239 @@ const { filters: accountSubFilters, filtered: accountSubRows } = useColumnFilter
 const { filters: perfProfileFilters, filtered: perfProfileTableRows } = useColumnFilters(filteredPerformanceProfiles, perfProfileColumns)
 const { filters: perfScheduleFilters, filtered: perfScheduleRows } = useColumnFilters(performanceScheduleBase, actionRollupColumns)
 const { filters: campaignFilters, filtered: campaignRows } = useColumnFilters(profileCampaigns, campaignColumns)
-const { filters: agentProfileFilters, filtered: agentProfileFilteredRows } = useColumnFilters(agentProfileRows, agentProfileColumns)
+const { filters: agentOrgProfileFilters, filtered: agentOrgProfileFilteredRows } = useColumnFilters(agentOrgProfileRows, agentOrgProfileColumns)
 const { filters: toolFilters, filtered: toolRows } = useColumnFilters(toolRowsSource, toolColumns)
-const { filters: profileToolFilters, filtered: profileToolRows } = useColumnFilters(toolRowsSource, profileToolColumns)
+const { filters: orgToolFilters, filtered: orgToolRows } = useColumnFilters(orgToolRowsSource, orgToolColumns)
 const { filters: chatFilters, filtered: chatRows } = useColumnFilters(chatRowsSource, chatColumns)
-const { filters: toolProfileFilters, filtered: toolProfileFilteredRows } = useColumnFilters(toolProfileRows, toolProfileColumns)
+const { filters: toolOrgFilters, filtered: toolOrgRows } = useColumnFilters(toolOrgRowsSource, toolOrgColumns)
 
-// ---- Distribution pie data (Accounts + Agent) ----
-const accountsStatusPie = computed(() => {
-  const statuses = ['Healthy', 'Moderate', 'At Risk', 'Churned']
-  return statuses.map(s => ({ name: s, value: accountRows.value.filter(a => a.status === s).length }))
+// ---- Accounts: the paying book, in money ----
+//
+// The page is read by people whose revenue is the ad spend flowing through it, so every
+// number here is about that spend over the range and about the accounts behind it. All of
+// it derives from `accountRows`, the rows the table is actually showing, so a table filter
+// redraws the strip and both charts - no separate query, no stale picture.
+const accountBook = computed(() => managedBook(accountRows.value))
+const accountStatusRows = computed(() => statusBreakdown(accountBook.value.managed))
+const accountStatusRadial = computed(() => statusRadialSlices(accountStatusRows.value))
+const accountRadialCaption = computed(() => statusRadialCaption(accountStatusRows.value))
+const accountScale = computed(() => scaleSummary(accountBook.value.managed))
+const accountAtRisk = computed(() => topBySpend(accountBook.value.managed, 'At Risk', 10))
+const accountAtRiskSpend = computed(() => accountStatusRows.value.find(r => r.status === 'At Risk')?.spend ?? 0)
+const accountAtRiskCount = computed(() => accountStatusRows.value.find(r => r.status === 'At Risk')?.orgs ?? 0)
+/** Risk as a share of what we manage, which is the form the audience reads it in. */
+const accountAtRiskShare = computed(() => {
+  const { spend } = accountScale.value
+  return spend > 0 ? accountAtRiskSpend.value / spend * 100 : 0
 })
-const agentProfileToolCallsPie = computed(() => {
-  const rows = agentProfileFilteredRows.value.map(p => ({ name: p.name, value: p.toolCalls })).filter(d => d.value > 0).sort((a, b) => b.value - a.value)
-  const TOP = 8
-  if (rows.length <= TOP)
-    return rows
-  return [...rows.slice(0, TOP), { name: 'Others', value: rows.slice(TOP).reduce((n, d) => n + d.value, 0) }]
+/** The denominator behind "在管广告主": every account in the export, before the paying filter. */
+const accountTotalOrgs = computed(() => accountRows.value.length)
+const accountAtRiskCaption = computed(() => {
+  const { spend } = accountScale.value
+  const atRisk = accountAtRiskSpend.value
+  const share = spend > 0 ? atRisk / spend * 100 : 0
+  return `At Risk 账号合计 ${formatMetric(atRisk, { currency: true })}，占在管花费 ${share.toFixed(1)}%。`
 })
-const agentTotalToolCalls = computed(() => agentProfileFilteredRows.value.reduce((n, p) => n + p.toolCalls, 0))
-const agentProfileChatsPie = computed(() => {
-  const rows = agentProfileFilteredRows.value.map(p => ({ name: p.name, value: p.chats })).filter(d => d.value > 0).sort((a, b) => b.value - a.value)
-  const TOP = 8
-  if (rows.length <= TOP)
-    return rows
-  return [...rows.slice(0, TOP), { name: 'Others', value: rows.slice(TOP).reduce((n, d) => n + d.value, 0) }]
+/** What the health numbers deliberately leave out, said out loud rather than hidden. */
+const accountExcludedCaption = computed(() => {
+  const { trial, noSpend } = accountBook.value.excluded
+  return `口径：仅统计非试用版且有广告花费的账号——另有 ${trial.toLocaleString('en-US')} 个试用版账号、${noSpend} 个非试用版但区间内无花费的账号未计入。`
 })
-const agentTotalChats = computed(() => agentProfileFilteredRows.value.reduce((n, p) => n + p.chats, 0))
-const toolCallsByToolPie = computed(() => toolRows.value.map(t => ({ name: t.tool, value: t.calls })).filter(d => d.value > 0))
+// Agent Analytics L1.
+//
+// These distributions have no head to name: over a month the biggest organization holds
+// 4.3% of the tool calls and the top ten hold 33%, and the tools are used by ~54
+// organizations each. A share-of-total ring therefore draws two thirds of itself as
+// "Others" and answers nothing. The charts here show the *shape* of the population and
+// the points outside it instead, and every tail is stated in words rather than hidden.
+/** The rows rolled up per organization, which is what the two org pies show. */
+const agentOrgRollup = computed(() => {
+  const byOrg = new Map<string, { orgId: string, organization: string, toolCalls: number, chats: number }>()
+  for (const row of agentOrgProfileFilteredRows.value) {
+    const cell = byOrg.get(row.orgId) ?? { orgId: row.orgId, organization: row.organization, toolCalls: 0, chats: 0 }
+    cell.toolCalls += row.toolCalls
+    cell.chats += row.chats
+    byOrg.set(row.orgId, cell)
+  }
+  return [...byOrg.values()]
+})
+const AGENT_TOP = 12
+/** Orgs per usage band: the shape a share chart cannot show. */
+const agentOrgUsageHistogram = computed(() => usageBuckets(agentOrgRollup.value.map(r => r.toolCalls)))
+/** Adoption: organizations active in the range over organizations that ever onboarded. */
+const agentAdoption = computed(() => ({
+  active: agentOrgRollup.value.length,
+  total: agentAllOrgs.value,
+  rate: agentAllOrgs.value > 0 ? agentOrgRollup.value.length / agentAllOrgs.value * 100 : 0,
+}))
+/**
+ * Calls against active days, per profile. The diagonal is normal usage; the points
+ * above it are heavy use squeezed into few days, which is what "abnormal" means here.
+ * Colouring by the per-day rate (not the total) is what makes the outlier visible - a
+ * big total over many days is simply a busy profile.
+ */
+const agentIntensity = computed(() => usageIntensity(agentUsageRows.value.map(r => ({
+  orgId: r.orgId,
+  organization: r.organization,
+  profile: r.profile || '未绑定 Profile',
+  calls: r.calls,
+  activeDays: r.activeDays,
+}))))
+const agentIntensityPoints = computed(() => {
+  const { points, p95 } = agentIntensity.value
+  const { palette } = chartTokens()
+  return points.map(p => ({
+    name: `${p.organization} · ${p.profile}`,
+    x: p.activeDays,
+    y: p.calls,
+    size: p.calls,
+    color: p.callsPerDay >= p95 ? palette[4] : palette[0],
+    detail: `每活跃天 ${p.callsPerDay.toFixed(1)} 次`,
+  }))
+})
+/**
+ * The histogram's own tail sentence, so the reader knows what the bars cover.
+ *
+ * No ranked org bar here on purpose: the table below is already the ranking, and drawing
+ * it twice would only move the same numbers next to the same numbers.
+ */
+const agentOrgUsageCaption = computed(() => {
+  const bands = agentOrgUsageHistogram.value
+  const middle = bands[3].value + bands[4].value
+  return `按组织统计（共 ${agentAdoption.value.active} 个组织）：${middle} 个组织落在 21–500 次，中位水平即在此区间；没有任何组织超过整体用量的 5%。`
+})
+const agentTotalToolCalls = computed(() => agentOrgProfileFilteredRows.value.reduce((n, p) => n + p.toolCalls, 0))
+const agentTotalChats = computed(() => agentOrgProfileFilteredRows.value.reduce((n, p) => n + p.chats, 0))
+// L2 organization details
+const orgToolCount = computed(() => new Set(orgToolRows.value.map(r => r.tool)).size)
+const orgTotalCalls = computed(() => orgToolRows.value.reduce((n, r) => n + r.calls, 0))
+const orgTotalErrors = computed(() => orgToolRows.value.reduce((n, r) => n + r.errors, 0))
+/**
+ * The same distributions as the L1 tabs, ranked: a bar reads a magnitude, a ring cannot.
+ *
+ * Both charts aggregate first. The table below is one row per (tool, sub account,
+ * profile), so charting its rows directly drew one bar per *combination* - the same sub
+ * account repeated for every tool it used - and its "top 12" was a top 12 of
+ * combinations rather than of sub accounts.
+ */
+const orgSubAccountRollup = computed(() => rollupBy(orgToolRows.value, r => r.subAccount, r => r.subAccount || '—', r => r.calls))
+/**
+ * Long account names differ near the end, and the axis truncates the end away.
+ *
+ * "…youxiangsi" and "…xianggongsi" are different accounts that both render as
+ * "xiamenlongwuchun…", which reads as a duplicated bar. Keeping the tail instead of the
+ * head is what makes the label an identity. Full names stay in the tooltip.
+ */
+function shortProfileName(name: string, max = 18): string {
+  return name.length > max ? `…${name.slice(-(max - 1))}` : name
+}
+
+/**
+ * Profiles are rolled up by what the label can show: marketplace plus the name's tail.
+ *
+ * The export's profile name is the account's name, so one organization can hold several
+ * profiles that share it; the marketplace-led short label is the identity a person can
+ * act on. The table below keeps the exact grain.
+ */
+const orgProfileRollup = computed(() => rollupBy(
+  orgToolRows.value,
+  r => `${r.marketplace ?? ''}|${r.name ?? ''}`,
+  r => (r.marketplace ? `${r.marketplace} · ${shortProfileName(r.name || '—')}` : shortProfileName(r.name || '—')),
+  r => r.calls,
+))
+const orgSubAccountRank = computed(() => rankWithTail(orgSubAccountRollup.value, r => r.value, r => r.name, AGENT_TOP))
+const orgProfileRank = computed(() => rankWithTail(orgProfileRollup.value, r => r.value, r => r.name, AGENT_TOP))
+const orgSubAccountBars = computed(() => withTailRow(orgSubAccountRank.value))
+const orgProfileBars = computed(() => withTailRow(orgProfileRank.value))
+const orgSubAccountCaption = computed(() => rankCaption('子账号', orgSubAccountRank.value))
+const orgProfileCaption = computed(() => rankCaption('Profile', orgProfileRank.value))
+// L2 one tool, by organization
+const toolOrgRollup = computed(() => {
+  const byOrg = new Map<string, { orgId: string, organization: string, calls: number }>()
+  for (const row of toolOrgRows.value) {
+    const cell = byOrg.get(row.orgId) ?? { orgId: row.orgId, organization: row.organization, calls: 0 }
+    cell.calls += row.calls
+    byOrg.set(row.orgId, cell)
+  }
+  return [...byOrg.values()]
+})
+const toolTotalCallsByOrg = computed(() => toolOrgRollup.value.reduce((n, r) => n + r.calls, 0))
+const orgUsingToolTotal = computed(() => toolOrgRollup.value.length)
+/**
+ * The tool's daily usage, with the days it was never called filled in as zeros.
+ *
+ * The export only carries days with rows, so a quiet Sunday used to arrive as no bar at
+ * all - which reads as missing data rather than as nobody using the tool.
+ */
+const toolTrendDays = computed(() => fillTrendDays(agentToolTrend.value, dateRange.value.from, dateRange.value.to))
+const toolTrendSummary = computed(() => trendSummary(toolTrendDays.value))
+/** What the trend says, in a sentence, so the chart does not have to be read off by eye. */
+const toolTrendCaption = computed(() => {
+  const { peakCalls, peakDate, daysWithUse, quietDays, maxOrgs } = toolTrendSummary.value
+  if (daysWithUse === 0)
+    return '该区间内这个工具没有被调用。'
+  return `区间内 ${daysWithUse} 天有调用、${quietDays} 天为零；峰值 ${peakCalls} 次（${peakDate}），单日最多 ${maxOrgs} 个组织在用。柱为调用量（左轴），实线为活跃组织数、虚线为活跃 Profile 数（右轴）。`
+})
+/**
+ * The adoption matrix: breadth (organizations that called it) against depth (calls per
+ * organization), sized by volume and coloured by failure rate. This is the chart that
+ * separates "everyone tried it once" from "a few teams live in it".
+ */
+const toolAdoptionRows = computed(() => toolAdoption(agentToolPairs.value))
+const toolAdoptionMedians = computed(() => ({
+  orgs: medianOf(toolAdoptionRows.value.map(r => r.orgs)),
+  callsPerOrg: medianOf(toolAdoptionRows.value.map(r => r.callsPerOrg)),
+}))
+const toolAdoptionPoints = computed(() => {
+  const { palette } = chartTokens()
+  const success = new Map(toolRows.value.map(t => [t.tool, t.success]))
+  return toolAdoptionRows.value
+    .filter(row => row.calls > 0)
+    .map((row) => {
+      const rate = 100 - (success.get(row.tool) ?? 100)
+      return {
+        name: row.tool,
+        x: row.orgs,
+        y: row.callsPerOrg,
+        size: row.calls,
+        color: rate > 15 ? palette[4] : rate > 5 ? palette[3] : palette[0],
+        detail: `失败率 ${rate.toFixed(1)}% · 回访中位 ${row.medianActiveDays} 天`,
+      }
+    })
+})
+/** The one-and-done split: the closest thing to "do users like it" the export carries. */
+const toolRepeatBuckets = computed(() => repeatBuckets(agentToolPairs.value))
+const toolRepeatCaption = computed(() => {
+  const buckets = toolRepeatBuckets.value
+  const total = buckets.reduce((n, b) => n + b.value, 0) || 1
+  const share = (value: number) => (value / total * 100).toFixed(0)
+  return `按「工具 × 组织」共 ${total.toLocaleString('en-US')} 组计：${share(buckets[0].value)}% 只用过 1 天，${share(buckets[2].value)}% 用了 5 天以上。`
+})
+const toolAdoptionCaption = computed(() => {
+  const { orgs, callsPerOrg } = toolAdoptionMedians.value
+  const many = toolAdoptionRows.value.filter(r => r.orgs >= orgs && r.callsPerOrg >= callsPerOrg).length
+  return `虚线为总体中位（使用组织 ${orgs} 个 · 每组织 ${callsPerOrg.toFixed(1)} 次）。右上象限 ${many} 个工具既被广泛使用、又被重复使用；气泡越大总调用越多，颜色越暖失败率越高。`
+})
+/** A ranked bar with its tail named as a row, so nothing is hidden behind "Others". */
+function withTailRow(rank: { slices: { name: string, value: number }[], tailCount: number, tailValue: number }) {
+  return rank.tailCount > 0 ? [...rank.slices, { name: `其余 ${rank.tailCount} 个`, value: rank.tailValue }] : rank.slices
+}
+function rankCaption(unit: string, rank: { tailCount: number, topShare: number }) {
+  return rank.tailCount > 0
+    ? `Top ${AGENT_TOP} 占 ${rank.topShare.toFixed(1)}%，另有 ${rank.tailCount} 个${unit}（合计一行列出）。`
+    : `${AGENT_TOP} 个以内全部列出。`
+}
 const toolTotalCalls = computed(() => toolRows.value.reduce((n, t) => n + t.calls, 0))
 const toolTotalErrors = computed(() => toolRows.value.reduce((n, t) => n + t.errors, 0))
 
+/**
+ * The Agent organization page opens on the tools tab, and the conversation export is
+ * ~67MB: it is fetched when its own tab is opened instead of with the page.
+ */
+function onAgentOrgTab(tab: string | number) {
+  if (String(tab) === 'chats')
+    void loadAgentChats()
+}
 // ---- TanStack column definitions + pinned table instances ----
 // One declaration per column (see columns.ts) drives cell rendering, sorting and
 // the filter predicates. Tables are created ONCE with a reactive row getter:
@@ -382,6 +630,79 @@ const scheduleScopeIds = computed(() => {
     return undefined
   return kept.map(s => s.scheduleId).sort()
 })
+
+/**
+ * What this action did day by day, and what its campaigns earned.
+ *
+ * Cross-filtered by construction: the rows carry the schedule id, so the chart keeps the
+ * schedules the table is showing and re-aggregates in the browser. A table filter redraws
+ * it with no extra request, which is why the money series is not pre-aggregated per day by
+ * the back end.
+ *
+ * Declared *after* `scheduleScopeIds` on purpose: the selection watcher below runs
+ * immediately, so a computed that reads the filtered schedule ids from above its
+ * declaration would touch them before initialization.
+ */
+// String, on both sides of the comparison: DuckDB hands int64 schedule ids back as numbers
+// while the dim's own rows reach the page through a different projection, and a Set of
+// numbers answers "no" to every string lookup - the chart would simply come back empty.
+const actionScheduleIds = computed(() => new Set(scopedPerfSchedules.value.map(s => String(s.scheduleId))))
+const actionTrendPointDays = computed(() => {
+  const allowed = scheduleScopeIds.value === undefined ? undefined : new Set(scheduleScopeIds.value.map(String))
+  const keep = (row: { scheduleId?: string }) => {
+    const id = String(row.scheduleId ?? '')
+    return actionScheduleIds.value.has(id) && (!allowed || allowed.has(id))
+  }
+  return buildActionTrendDays(
+    actionActivityRows.value.filter(keep),
+    actionTrendMoneyRows.value.filter(keep),
+    dateRange.value.from,
+    dateRange.value.to,
+  )
+})
+const trendLeftMetrics = computed(() => actionTrendLeftMetrics(perfActionCategory.value, actionTrendPointDays.value))
+const trendRightMetrics = computed(() => [...ACTION_TREND_RIGHT_METRICS])
+const trendLeft = ref('')
+const trendRight = ref<string>(DEFAULT_ACTION_TREND_RIGHT)
+// A measure can disappear (another action's page, a re-filtered range), so the selection is
+// reconciled against what is actually plottable - never left pointing at a metric that has
+// no line behind it.
+// `flush: 'post'` is load-bearing. An immediate watcher runs *during* setup, so reading a
+// computed chain that reaches a ref declared further down the script threw
+// "Cannot access 'scheduleScopeIds' before initialization" - and would again the next time
+// someone reorders these blocks. Post-flush runs after setup has finished, so the
+// selection is reconciled without depending on declaration order.
+watch(trendLeftMetrics, (metrics) => {
+  if (!metrics.some(m => m.key === trendLeft.value))
+    trendLeft.value = metrics[0]?.key ?? ''
+}, { immediate: true, flush: 'post' })
+const trendLabels = computed(() => Object.fromEntries(trendLeftMetrics.value.map(m => [m.key, m.label])))
+/** The readings, so the shape does not have to be eyeballed off the canvas. */
+const trendCaption = computed(() => {
+  const days = actionTrendPointDays.value
+  if (!days.length || !trendLeft.value)
+    return ''
+  const parts: string[] = []
+  // One measure per axis: the left select switches which count is drawn, so the caption
+  // reports that one rather than stacking two of them.
+  const key = trendLeft.value
+  const peak = seriesPeak(days, key)
+  if (peak.value > 0)
+    parts.push(`${trendLabels.value[key] ?? key} 合计 ${Math.round(seriesTotal(days, key)).toLocaleString('en-US')}，峰值 ${Math.round(peak.value).toLocaleString('en-US')}（${peak.date}）`)
+  const right = ACTION_TREND_RIGHT_METRICS.find(m => m.key === trendRight.value)
+  if (right) {
+    if (right.percent) {
+      const spend = seriesTotal(days, 'adSpend')
+      const sales = seriesTotal(days, 'adSales')
+      parts.push(`区间 ACoS ${sales > 0 ? (spend / sales * 100).toFixed(1) : '0.0'}%`)
+    }
+    else {
+      parts.push(`${right.label} 合计 ${formatMetric(seriesTotal(days, trendRight.value), { currency: true })}`)
+    }
+  }
+  return `${parts.join('；')}。左轴为动作量，右轴为${right?.label ?? ''}。`
+})
+
 // Debounced because a filter is typed character by character, and every change is a
 // ~20M-row aggregate on the lakehouse.
 watchDebounced([page, action, campaignProfileId, scheduleScopeIds], () => {
@@ -389,11 +710,15 @@ watchDebounced([page, action, campaignProfileId, scheduleScopeIds], () => {
     void loadScheduleAnalytics(action.value, campaignProfileId.value, scheduleScopeIds.value)
 }, { immediate: true, debounce: 400, maxWait: 2000 })
 const activePerfScheduleCols = computed(() => makeColumns(activePerfScheduleColumns.value, { nameKey: 'scheduleName', badgeKeys: ['status', 'lastRunStatus'], navigate }))
-const agentProfileCols = makeColumns(agentProfileColumns, { href: (p: any) => `/customer-tracking/agent/profile/${p.amazonProfileId}`, navigate })
-const toolCols = makeColumns(toolColumns, { nameKey: 'tool', href: (t: any) => `/customer-tracking/agent/tool/${encodeURIComponent(t.tool)}/profiles`, navigate })
-const profileToolCols = makeColumns(profileToolColumns, { nameKey: 'tool', navigate })
-const chatCols = makeColumns(chatColumns, { navigate })
-const toolProfileCols = makeColumns(toolProfileColumns, { navigate })
+// The frozen identity of the Agent tables is the organization: it is what the L2 page
+// is about, and it is the link that opens it.
+const agentOrgProfileCols = makeColumns(agentOrgProfileColumns, { nameKey: 'organization', href: (r: any) => `/customer-tracking/agent/org/${r.orgId}`, navigate })
+const toolCols = makeColumns(toolColumns, { nameKey: 'tool', href: (t: any) => `/customer-tracking/agent/tool/${encodeURIComponent(t.tool)}/orgs`, navigate })
+const orgToolCols = makeColumns(orgToolColumns, { nameKey: 'tool', navigate })
+// The first message and the summary are prose: they never fit a column, so the cell shows
+// one truncated line and the full text (line breaks included) opens on hover.
+const chatCols = makeColumns(chatColumns, { navigate, previewKeys: ['first', 'summary'] })
+const toolOrgCols = makeColumns(toolOrgColumns, { nameKey: 'organization', href: (r: any) => `/customer-tracking/agent/org/${r.orgId}`, navigate })
 
 const accountTable = generateVueTable<any>({ columns: accountCols, data: () => accountRows.value, initialPinning: { left: ['name'], right: [] }, initialSorting: DEFAULT_SORTS.accounts })
 const accountAdTable = generateVueTable<any>({ columns: accountAdCols, data: () => accountAdRows.value, initialPinning: { left: ['name'], right: [] }, initialSorting: DEFAULT_SORTS['account-ads'] })
@@ -405,11 +730,11 @@ const campaignTable = generateVueTable<any>({ columns: campaignCols, data: () =>
 // The schedule table swaps its whole column set with the route scope, so it stays
 // computed — but it depends on route state only, never on the filtered rows.
 const perfScheduleRowTable = computed(() => generateVueTable<any>({ columns: activePerfScheduleCols.value, data: () => perfScheduleTableRows.value, initialPinning: { left: ['scheduleName'], right: [] }, initialSorting: DEFAULT_SORTS['perf-schedules'] }))
-const agentProfileTable = generateVueTable<any>({ columns: agentProfileCols, data: () => agentProfileFilteredRows.value, initialPinning: { left: ['name'], right: [] }, initialSorting: DEFAULT_SORTS['agent-profiles'] })
+const agentOrgProfileTable = generateVueTable<any>({ columns: agentOrgProfileCols, data: () => agentOrgProfileFilteredRows.value, initialPinning: { left: ['organization'], right: [] }, initialSorting: DEFAULT_SORTS['agent-org-profiles'] })
 const toolTable = generateVueTable<any>({ columns: toolCols, data: () => toolRows.value, initialPinning: { left: ['tool'], right: [] }, initialSorting: DEFAULT_SORTS.tools })
-const profileToolTable = generateVueTable<any>({ columns: profileToolCols, data: () => profileToolRows.value, initialPinning: { left: ['tool'], right: [] }, initialSorting: DEFAULT_SORTS['profile-tools'] })
+const orgToolTable = generateVueTable<any>({ columns: orgToolCols, data: () => orgToolRows.value, initialPinning: { left: ['tool'], right: [] }, initialSorting: DEFAULT_SORTS['agent-org-tools'] })
 const chatTable = generateVueTable<any>({ columns: chatCols, data: () => chatRows.value, initialPinning: { left: ['name'], right: [] }, initialSorting: DEFAULT_SORTS.chats })
-const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data: () => toolProfileFilteredRows.value, initialPinning: { left: ['name'], right: [] }, initialSorting: DEFAULT_SORTS['tool-profiles'] })
+const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => toolOrgRows.value, initialPinning: { left: ['organization'], right: [] }, initialSorting: DEFAULT_SORTS['agent-tool-orgs'] })
 </script>
 
 <template>
@@ -451,13 +776,80 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
     <div v-if="ready" class="flex flex-col gap-4">
       <!-- Accounts -->
       <template v-if="page === 'accounts'">
-        <Card>
-          <CardContent class="p-4">
-            <KpiChart title="Organizations by Status" :data="accountsStatusPie" />
-          </CardContent>
-        </Card>
-        <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
-          <span>Total Organizations <span class="font-medium text-foreground">{{ accountRows.length }}</span></span>
+        <!-- Row 1: the scale of what we run on Amazon's behalf, as figures rather than as
+             shapes - "how big is the book and where is the risk in it" is answered faster by
+             a number. Money first and the risk exposure beside it, because those are the two
+             figures this audience is measured on; the machinery that produces them follows. -->
+        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <StatTile
+            label="在管广告主"
+            :value="accountScale.advertisers.toLocaleString('en-US')"
+            :sub="`全部 ${accountTotalOrgs.toLocaleString('en-US')} 个账号中的付费在管部分`"
+          />
+          <StatTile
+            label="在管广告花费"
+            :value="formatMetric(accountScale.spend, { currency: true })"
+            :sub="`SP ${formatMetric(accountScale.spendByProduct.sp, { currency: true })} · SB ${formatMetric(accountScale.spendByProduct.sb, { currency: true })} · SD ${formatMetric(accountScale.spendByProduct.sd, { currency: true })}`"
+          />
+          <StatTile
+            label="At Risk 风险敞口"
+            :value="formatMetric(accountAtRiskSpend, { currency: true })"
+            :sub="`占在管花费 ${accountAtRiskShare.toFixed(1)}%，涉及 ${accountAtRiskCount} 个账号`"
+            tone="destructive"
+          />
+          <StatTile
+            label="Top 10 广告主集中度"
+            :value="`${accountScale.top10Share.toFixed(1)}%`"
+            sub="前 10 家占在管广告花费，越高越依赖少数客户"
+          />
+        </div>
+        <!-- The machinery behind the money, as a headline line rather than as cards: seven
+             short label/number pairs stretched across two cards left most of their area empty
+             whatever the spacing did. On one line they read in a single pass, and the eye
+             never travels further than the next pair. -->
+        <div class="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm text-muted-foreground">
+          <span>启用 Profile <span class="font-medium text-foreground">{{ accountScale.profilesEnabled.toLocaleString('en-US') }}</span></span>
+          <span>Ads 账号 <span class="font-medium text-foreground">{{ accountScale.adsAccountsEnabled.toLocaleString('en-US') }}</span></span>
+          <span>子账号 <span class="font-medium text-foreground">{{ accountScale.subAccountsEnabled.toLocaleString('en-US') }}</span></span>
+          <span>优化事件 <span class="font-medium text-foreground">{{ accountScale.optimizationEvents.toLocaleString('en-US') }}</span></span>
+          <span>调度运行 <span class="font-medium text-foreground">{{ accountScale.scheduleRuns.toLocaleString('en-US') }}</span></span>
+          <span>Agent 会话 <span class="font-medium text-foreground">{{ accountScale.chats.toLocaleString('en-US') }}</span></span>
+          <span>新建活动 <span class="font-medium text-foreground">{{ accountScale.campaignsLaunched.toLocaleString('en-US') }}</span></span>
+        </div>
+        <p class="text-xs text-muted-foreground">
+          {{ accountExcludedCaption }}
+        </p>
+
+        <!-- Row 2: health, as one shape that carries both variables - the share of accounts a
+             state holds and the share of the money sitting in it - beside the names holding
+             the at-risk part of that money. -->
+        <div class="grid gap-3 lg:grid-cols-2">
+          <Card>
+            <CardContent class="p-4">
+              <StatusRadialChart
+                height-class="h-72"
+                title="账号状态 · 数量与花费"
+                :slices="accountStatusRadial"
+                :total="formatMetric(accountScale.spend, { currency: true })"
+                total-label="在管广告花费"
+                :caption="accountRadialCaption"
+              />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent class="p-4">
+              <KpiChart
+                type="hbar"
+                height-class="h-64"
+                title="At Risk 账号 · 花费 Top 10"
+                :data="accountAtRisk"
+                format="currency"
+              />
+              <p class="mt-2 text-xs text-muted-foreground">
+                {{ accountAtRiskCaption }}
+              </p>
+            </CardContent>
+          </Card>
         </div>
         <Card>
           <CardContent class="flex flex-col gap-4">
@@ -661,47 +1053,26 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
           <span v-for="counter in headlineCounters" :key="counter.key">{{ counter.label }} <span class="font-medium text-foreground">{{ activityValue(counter.key) }}</span></span>
         </div>
 
-        <div class="grid gap-3 lg:grid-cols-3">
-          <!-- Chart 1: how much of the account this action's campaigns account for. -->
-          <Card>
-            <CardContent class="flex flex-col gap-3 p-4">
-              <KpiChart :title="`账号构成 · ${compositionMetricLabel}`" :data="compositionData" :format="compositionFormat" />
-              <Select v-model="compositionMetric">
-                <SelectTrigger class="h-8 w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem v-for="metric in COMPOSITION_METRICS" :key="metric.key" :value="metric.key">
-                    {{ metric.label }}
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <p class="text-xs text-muted-foreground">
-                账号{{ compositionMetricLabel }}中，{{ composition.share.toFixed(1) }}% {{ scheduleSegments.sharePhrase }}
-                （{{ formatMetric(composition.part, { currency: isCurrencyForComposition }) }} / {{ formatMetric(composition.total, { currency: isCurrencyForComposition }) }}）。
-              </p>
-            </CardContent>
-          </Card>
-          <!-- Chart 2: what the schedules actually did over the range. -->
-          <Card>
-            <CardContent class="p-4">
-              <KpiChart type="hbar" height-class="h-64" title="软件执行量" :data="scheduleActivityChart" />
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent class="p-4">
-              <KpiChart title="调度状态" :data="scheduleStatusMix" />
-            </CardContent>
-          </Card>
-        </div>
+        <!-- The action's own trend: what it did, and what those campaigns earned. One card
+             for both categories; only the measures it offers differ. -->
+        <Card>
+          <CardContent class="p-4">
+            <ActionTrendChart
+              v-model:left="trendLeft"
+              v-model:right="trendRight"
+              :days="actionTrendPointDays"
+              :left-metrics="trendLeftMetrics"
+              :right-metrics="trendRightMetrics"
+              :title="`${actionCn[action] || action} 的动作量与产出趋势`"
+              :caption="trendCaption"
+            />
+          </CardContent>
+        </Card>
 
-        <!-- Stretch, not `items-start`: the two cards are the same kind of panel and
-             must end on the same line. Their charts already share a height, so the
-             slack lands as extra space above the trailing note of the shorter card.
-             A launch action has no first-touch card at all (it never touches an
-             existing campaign), so the ACoS chart takes the whole row instead of
-             sitting beside an empty column. -->
-        <div class="grid gap-3" :class="{ 'lg:grid-cols-2': !isLaunchAction }">
+        <!-- Only an optimisation action keeps this row. A launch action has no first touch
+             to measure and, since its charts became the single trend above, nothing left
+             here either - so the whole row is absent rather than half empty. -->
+        <div v-if="!isLaunchAction" class="grid gap-3 lg:grid-cols-2">
           <!-- Chart 3: the honest cross-section. Our segment is not the cheapest
                per dollar of sales, and the campaign counts travel with the bars. -->
           <Card>
@@ -728,7 +1099,7 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
                campaign, it never manages one, so "before and after we touched it" is
                not a question this page can answer. The card is absent rather than
                empty, and the back end is not asked for the aggregate either. -->
-          <Card v-if="!isLaunchAction">
+          <Card>
             <CardContent class="flex h-full flex-col gap-4 p-4">
               <div class="grid gap-4 md:grid-cols-2">
                 <GroupedBarChart
@@ -769,59 +1140,90 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
         </Card>
       </template>
 
-      <!-- Agent -->
+      <!-- Agent Analytics L1: the org+profile roll-up, and the tool-level view. -->
       <template v-else-if="page === 'agent'">
         <Card>
           <CardContent class="flex flex-col gap-4">
             <Tabs :default-value="tabDefaults[page]">
               <TabsList>
-                <TabsTrigger value="profiles">
-                  Profile Stats
+                <TabsTrigger value="org">
+                  Org+Profile Stats
                 </TabsTrigger>
                 <TabsTrigger value="tools">
                   Tool Stats
                 </TabsTrigger>
               </TabsList>
-              <TabsContent value="profiles" class="flex flex-col gap-4">
+              <TabsContent value="org" class="flex flex-col gap-4">
+                <!-- Distribution, not share: the biggest organization holds 4% of the
+                     calls, so a ring would draw two thirds of itself as "Others". -->
                 <div class="grid gap-3 lg:grid-cols-2">
                   <Card>
                     <CardContent class="p-4">
-                      <KpiChart title="Tool Calls by Profile" :data="agentProfileToolCallsPie" />
+                      <KpiChart type="bar" height-class="h-72" title="组织使用量分布" :data="agentOrgUsageHistogram" />
+                      <p class="mt-2 text-xs text-muted-foreground">
+                        {{ agentOrgUsageCaption }}
+                      </p>
                     </CardContent>
                   </Card>
                   <Card>
                     <CardContent class="p-4">
-                      <KpiChart title="Chats by Profile" :data="agentProfileChatsPie" />
+                      <ScatterChart
+                        height-class="h-72"
+                        title="使用强度：活跃天数 × 调用量"
+                        x-label="活跃天数"
+                        y-label="调用量"
+                        :points="agentIntensityPoints"
+                        :reference-lines="[{ axis: 'y', value: agentIntensity.p95, label: `每活跃天 p95 = ${agentIntensity.p95.toFixed(1)} 次` }]"
+                        :caption="`每个点为 Org+Profile（${agentIntensity.points.length} 个）。对角线之上＝把用量压在少数几天里，就是需要关注的异常；红色点表示每活跃天调用量已达总体 p95 以上。`"
+                      />
                     </CardContent>
                   </Card>
                 </div>
                 <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
-                  <span>Profiles <span class="font-medium text-foreground">{{ agentProfileFilteredRows.length }}</span></span>
+                  <span>Organizations <span class="font-medium text-foreground">{{ agentAdoption.active }}</span></span>
+                  <span>采纳率 <span class="font-medium text-foreground">{{ agentAdoption.rate.toFixed(1) }}%</span> <span class="text-xs">（{{ agentAdoption.active }} / {{ agentAdoption.total }} 个已接入组织）</span></span>
+                  <span>Org+Profile Rows <span class="font-medium text-foreground">{{ agentOrgProfileFilteredRows.length }}</span></span>
                   <span>Total Tool Calls <span class="font-medium text-foreground">{{ agentTotalToolCalls }}</span></span>
                   <span>Total Chats <span class="font-medium text-foreground">{{ agentTotalChats }}</span></span>
                 </div>
-                <TableToolbar v-model:filters="agentProfileFilters" v-model:range="dateRange" :columns="agentProfileColumns" :rows="agentProfileRows" />
-                <DataTable :table="agentProfileTable" :columns="agentProfileCols" :data="agentProfileFilteredRows" />
+                <TableToolbar v-model:filters="agentOrgProfileFilters" v-model:range="dateRange" :columns="agentOrgProfileColumns" :rows="agentOrgProfileRows" />
+                <DataTable :table="agentOrgProfileTable" :columns="agentOrgProfileCols" :data="agentOrgProfileFilteredRows" />
               </TabsContent>
               <TabsContent value="tools" class="flex flex-col gap-4">
+                <!-- The two questions the tool tab exists for: is it used widely, and
+                     do the people who use it come back? -->
                 <div class="grid gap-3 lg:grid-cols-2">
                   <Card>
                     <CardContent class="p-4">
-                      <KpiChart title="Tool Calls by Tool" :data="toolCallsByToolPie" />
+                      <ScatterChart
+                        height-class="h-72"
+                        title="工具采纳矩阵：广度 × 深度"
+                        x-label="使用组织数"
+                        y-label="每组织调用次数"
+                        :points="toolAdoptionPoints"
+                        :reference-lines="[
+                          { axis: 'x', value: toolAdoptionMedians.orgs, label: '中位广度' },
+                          { axis: 'y', value: toolAdoptionMedians.callsPerOrg, label: '中位深度' },
+                        ]"
+                        :caption="toolAdoptionCaption"
+                      />
                     </CardContent>
                   </Card>
                   <Card>
-                    <CardContent class="flex h-full flex-col justify-center gap-2 p-4">
-                      <p class="text-sm font-medium text-muted-foreground">
-                        Tool Summary
+                    <CardContent class="p-4">
+                      <KpiChart type="bar" height-class="h-72" title="工具回访分布" :data="toolRepeatBuckets" />
+                      <p class="mt-2 text-xs text-muted-foreground">
+                        {{ toolRepeatCaption }}
                       </p>
-                      <div class="flex flex-col gap-1 text-sm text-muted-foreground">
-                        <span>Tools <span class="font-medium text-foreground">{{ toolRows.length }}</span></span>
-                        <span>Total Calls <span class="font-medium text-foreground">{{ toolTotalCalls }}</span></span>
-                        <span>Errors <span class="font-medium text-foreground">{{ toolTotalErrors }}</span></span>
-                      </div>
                     </CardContent>
                   </Card>
+                </div>
+                <!-- The counts the Tool Summary card used to hold: kept, because a
+                     tool list without its totals cannot be read against anything. -->
+                <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
+                  <span>Tools <span class="font-medium text-foreground">{{ toolRows.length }}</span></span>
+                  <span>Total Calls <span class="font-medium text-foreground">{{ toolTotalCalls }}</span></span>
+                  <span>Errors <span class="font-medium text-foreground">{{ toolTotalErrors }}</span></span>
                 </div>
                 <TableToolbar v-model:filters="toolFilters" v-model:range="dateRange" :columns="toolColumns" :rows="toolRowsSource" />
                 <DataTable :table="toolTable" :columns="toolCols" :data="toolRows" />
@@ -831,11 +1233,11 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
         </Card>
       </template>
 
-      <!-- Agent profile -->
-      <template v-else-if="page === 'agent-profile'">
+      <!-- Agent organization details -->
+      <template v-else-if="page === 'agent-org'">
         <Card>
           <CardContent class="flex flex-col gap-4">
-            <Tabs :default-value="tabDefaults[page]">
+            <Tabs :default-value="tabDefaults[page]" @update:model-value="onAgentOrgTab">
               <TabsList>
                 <TabsTrigger value="tools">
                   Tool Calls Details
@@ -845,10 +1247,38 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
                 </TabsTrigger>
               </TabsList>
               <TabsContent value="tools" class="flex flex-col gap-4">
-                <TableToolbar v-model:filters="profileToolFilters" v-model:range="dateRange" :columns="profileToolColumns" :rows="toolRowsSource" />
-                <DataTable :table="profileToolTable" :columns="profileToolCols" :data="profileToolRows" />
+                <!-- Ranked bars, not rings: with 530 profiles the tail is most of the
+                     population, so the tail is named as a row instead of hidden. -->
+                <div class="grid gap-3 lg:grid-cols-2">
+                  <Card>
+                    <CardContent class="p-4">
+                      <KpiChart type="hbar" height-class="h-72" :title="`子账号调用量（Top ${AGENT_TOP}）`" :data="orgSubAccountBars" />
+                      <p class="mt-2 text-xs text-muted-foreground">
+                        {{ orgSubAccountCaption }}
+                      </p>
+                    </CardContent>
+                  </Card>
+                  <Card>
+                    <CardContent class="p-4">
+                      <KpiChart type="hbar" height-class="h-72" :title="`Profile 调用量（Top ${AGENT_TOP}）`" :data="orgProfileBars" />
+                      <p class="mt-2 text-xs text-muted-foreground">
+                        {{ orgProfileCaption }}
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+                <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
+                  <span>Tools <span class="font-medium text-foreground">{{ orgToolCount }}</span></span>
+                  <span>Total Calls <span class="font-medium text-foreground">{{ orgTotalCalls }}</span></span>
+                  <span>Errors <span class="font-medium text-foreground">{{ orgTotalErrors }}</span></span>
+                </div>
+                <TableToolbar v-model:filters="orgToolFilters" v-model:range="dateRange" :columns="orgToolColumns" :rows="orgToolRowsSource" />
+                <DataTable :table="orgToolTable" :columns="orgToolCols" :data="orgToolRows" />
               </TabsContent>
               <TabsContent value="chats" class="flex flex-col gap-4">
+                <div v-if="agentChatsLoading" class="py-2 text-sm text-muted-foreground">
+                  Loading conversations…
+                </div>
                 <TableToolbar v-model:filters="chatFilters" v-model:range="dateRange" :columns="chatColumns" :rows="chatRowsSource" />
                 <DataTable :table="chatTable" :columns="chatCols" :data="chatRows" />
               </TabsContent>
@@ -857,12 +1287,23 @@ const toolProfileTable = generateVueTable<any>({ columns: toolProfileCols, data:
         </Card>
       </template>
 
-      <!-- Tool profiles -->
+      <!-- One tool across every organization: is it being used more or less, and by more
+           organizations or the same ones? -->
       <template v-else>
         <Card>
           <CardContent class="flex flex-col gap-4">
-            <TableToolbar v-model:filters="toolProfileFilters" v-model:range="dateRange" :columns="toolProfileColumns" :rows="toolProfileRows" />
-            <DataTable :table="toolProfileTable" :columns="toolProfileCols" :data="toolProfileFilteredRows" />
+            <TrendChart
+              height-class="h-80"
+              :title="`${agentToolName} 的使用趋势`"
+              :days="toolTrendDays"
+              :caption="toolTrendCaption"
+            />
+            <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
+              <span>Organizations <span class="font-medium text-foreground">{{ orgUsingToolTotal }}</span></span>
+              <span>Total Calls <span class="font-medium text-foreground">{{ toolTotalCallsByOrg }}</span></span>
+            </div>
+            <TableToolbar v-model:filters="toolOrgFilters" v-model:range="dateRange" :columns="toolOrgColumns" :rows="toolOrgRowsSource" />
+            <DataTable :table="toolOrgTable" :columns="toolOrgCols" :data="toolOrgRows" />
           </CardContent>
         </Card>
       </template>

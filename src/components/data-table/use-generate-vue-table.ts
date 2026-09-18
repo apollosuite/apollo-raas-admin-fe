@@ -49,6 +49,10 @@ export function generateVueTable<T>(props: DataTableProps<T>) {
   const tableConfig: TableOptionsWithReactiveData<T> = {
     get data() { return toValue(props.data) },
     get columns() { return props.columns },
+    // Shift-click stacks up to three sort columns; the fourth replaces the oldest, so
+    // the ordering stays something a person can reason about.
+    enableMultiSort: true,
+    maxMultiSortColCount: 3,
     state: {
       get sorting() { return sorting.value },
       get columnFilters() { return columnFilters.value },

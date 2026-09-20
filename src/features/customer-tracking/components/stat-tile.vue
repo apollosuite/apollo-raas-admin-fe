@@ -29,7 +29,7 @@ defineProps<{
         {{ label }}
       </p>
       <p
-        class="text-2xl font-semibold tabular-nums"
+        class="text-xl font-semibold tabular-nums sm:text-2xl"
         :class="tone === 'destructive' ? 'text-destructive' : ''"
       >
         {{ value }}

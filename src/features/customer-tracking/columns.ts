@@ -52,6 +52,8 @@ export function cellDisplay(row: Record<string, any>, spec: ColumnSpec): string 
   switch (type) {
     case 'currency':
       return formatMetric(v, { currency: true })
+    case 'compact':
+      return formatMetric(v, {})
     case 'percent':
       return `${Number(v).toFixed(1)}%`
     case 'ratioTuple':
@@ -101,6 +103,11 @@ function renderCell(spec: ColumnSpec, row: Record<string, any>, opts: ResolvedCo
 
   if (type === 'currency')
     return h('span', { class: 'font-mono tabular-nums', title: formatExact(v, { currency: true }) }, formatMetric(v, { currency: true }))
+
+  // Same idea as currency, without the symbol: the cell shows a reading, the hover shows the
+  // number it came from, so nobody has to guess what "5.1M" was.
+  if (type === 'compact')
+    return h('span', { class: 'font-mono tabular-nums', title: formatExact(v) }, formatMetric(v, {}))
 
   if (type === 'ratioTuple') {
     const total = tupleMetric(v, 'total')
@@ -207,6 +214,7 @@ function sortConfigFor(type: ColumnType, key: string): SortConfig {
     case 'list':
       return { enableSorting: false }
     case 'number':
+    case 'compact':
     case 'currency':
     case 'percent':
     case 'split':
@@ -248,6 +256,9 @@ const WIDTH_BY_TYPE: Record<ColumnType, WidthRange> = {
   connection: { size: 132, minSize: 104, maxSize: 300 },
   boolean: { size: 96, minSize: 72, maxSize: 200 },
   number: { size: 124, minSize: 88, maxSize: 320 },
+  // A compact reading is at most five glyphs ("39.1M"), so it needs the least room of the
+  // number family - but it sorts and filters as a number, so it keeps a number's bounds.
+  compact: { size: 112, minSize: 84, maxSize: 320 },
   currency: { size: 132, minSize: 96, maxSize: 320 },
   percent: { size: 108, minSize: 84, maxSize: 280 },
   date: { size: 132, minSize: 104, maxSize: 300 },
@@ -382,8 +393,8 @@ export const PROFILE_COLUMNS: readonly ColumnSpec[] = [
   ['acos', 'ACoS', 'percent'],
   ['tacos', 'TACoS', 'percent'],
   ['adOrders', 'Ad Orders', 'number'],
-  ['impressions', 'Impressions', 'number'],
-  ['clicks', 'Clicks', 'number'],
+  ['impressions', 'Impressions', 'compact'],
+  ['clicks', 'Clicks', 'compact'],
   ['cpc', 'CPC', 'currency'],
   ['cvr', 'CVR', 'percent'],
   ['scheduleRuns', 'Schedule Runs', 'number'],
@@ -406,8 +417,8 @@ export const CAMPAIGN_COLUMNS: readonly ColumnSpec[] = [
   ['adSales', 'Ad Sales', 'currency'],
   ['acos', 'ACoS', 'percent'],
   ['adOrders', 'Ad Orders', 'number'],
-  ['impressions', 'Impressions', 'number'],
-  ['clicks', 'Clicks', 'number'],
+  ['impressions', 'Impressions', 'compact'],
+  ['clicks', 'Clicks', 'compact'],
   ['cpc', 'CPC', 'currency'],
   ['cvr', 'CVR', 'percent'],
   ['optimizationEvents', 'Optimization Events', 'number'],
@@ -471,8 +482,8 @@ export const LAUNCH_CAMPAIGN_COLUMNS: readonly ColumnSpec[] = [
   ['adSales', 'Ad Sales', 'currency'],
   ['acos', 'ACoS', 'percent'],
   ['adOrders', 'Ad Orders', 'number'],
-  ['impressions', 'Impressions', 'number'],
-  ['clicks', 'Clicks', 'number'],
+  ['impressions', 'Impressions', 'compact'],
+  ['clicks', 'Clicks', 'compact'],
   ['cpc', 'CPC', 'currency'],
   ['cvr', 'CVR', 'percent'],
 ]
@@ -487,8 +498,8 @@ export const OPTIMIZATION_CAMPAIGN_COLUMNS: readonly ColumnSpec[] = [
   ['adSales', 'Ad Sales', 'currency'],
   ['acos', 'ACoS', 'percent'],
   ['adOrders', 'Ad Orders', 'number'],
-  ['impressions', 'Impressions', 'number'],
-  ['clicks', 'Clicks', 'number'],
+  ['impressions', 'Impressions', 'compact'],
+  ['clicks', 'Clicks', 'compact'],
   ['cpc', 'CPC', 'currency'],
   ['cvr', 'CVR', 'percent'],
 ]
@@ -693,8 +704,8 @@ export const PERF_PROFILE_COLUMNS: readonly ColumnSpec[] = [
   ['acos', 'ACoS', 'percent'],
   ['tacos', 'TACoS', 'percent'],
   ['adOrders', 'Ad Orders', 'number'],
-  ['impressions', 'Impressions', 'number'],
-  ['clicks', 'Clicks', 'number'],
+  ['impressions', 'Impressions', 'compact'],
+  ['clicks', 'Clicks', 'compact'],
   ['cpc', 'CPC', 'currency'],
   ['cvr', 'CVR', 'percent'],
   ['scheduleRuns', 'Schedule Runs', 'number'],

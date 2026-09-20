@@ -33,3 +33,8 @@ stats.html
 .env.development
 .env.test
 # .env.production - Committed to Git for internal project (no sensitive data)
+
+# Scratch, never shipped: screenshots captured by the Playwright probes and the one-off
+# spend-metric exploration page. Both are local working files, not part of the app.
+/.e2e/
+/spend-metric-preview.html

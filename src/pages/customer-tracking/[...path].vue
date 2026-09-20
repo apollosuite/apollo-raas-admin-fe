@@ -780,7 +780,12 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
              shapes - "how big is the book and where is the risk in it" is answered faster by
              a number. Money first and the risk exposure beside it, because those are the two
              figures this audience is measured on; the machinery that produces them follows. -->
-        <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <!-- Four equal cards. An earlier pass made the risk tile twice as wide to give the row
+             a focal point; with the same amount of content in each card that read as a layout
+             accident rather than emphasis, so the weight comes from the red figure and its
+             caption instead of from the box. On a phone the grid is 2-up - four full-width
+             cards put the charts below the fold. -->
+        <div class="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatTile
             label="在管广告主"
             :value="accountScale.advertisers.toLocaleString('en-US')"
@@ -807,7 +812,7 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
              short label/number pairs stretched across two cards left most of their area empty
              whatever the spacing did. On one line they read in a single pass, and the eye
              never travels further than the next pair. -->
-        <div class="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm text-muted-foreground">
+        <div class="flex flex-wrap items-baseline gap-x-6 gap-y-1 border-t pt-3 text-sm tabular-nums text-muted-foreground">
           <span>启用 Profile <span class="font-medium text-foreground">{{ accountScale.profilesEnabled.toLocaleString('en-US') }}</span></span>
           <span>Ads 账号 <span class="font-medium text-foreground">{{ accountScale.adsAccountsEnabled.toLocaleString('en-US') }}</span></span>
           <span>子账号 <span class="font-medium text-foreground">{{ accountScale.subAccountsEnabled.toLocaleString('en-US') }}</span></span>
@@ -816,8 +821,10 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
           <span>Agent 会话 <span class="font-medium text-foreground">{{ accountScale.chats.toLocaleString('en-US') }}</span></span>
           <span>新建活动 <span class="font-medium text-foreground">{{ accountScale.campaignsLaunched.toLocaleString('en-US') }}</span></span>
         </div>
-        <p class="text-xs text-muted-foreground">
-          {{ accountExcludedCaption }}
+        <!-- The disclosure stays visible but stops being a third grey paragraph: one clause
+             on the page, the full wording on hover. -->
+        <p class="text-xs text-muted-foreground" :title="accountExcludedCaption">
+          口径：仅统计非试用版且有广告花费的账号。
         </p>
 
         <!-- Row 2: health, as one shape that carries both variables - the share of accounts a
@@ -944,14 +951,14 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
             </CardContent>
           </Card>
         </div>
-        <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
-          <span>Profiles <span class="font-medium text-foreground">{{ performanceProfilesCount }}</span></span>
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm tabular-nums text-muted-foreground">
+          <span>Profiles <span class="font-medium text-foreground">{{ performanceProfilesCount.toLocaleString('en-US') }}</span></span>
           <span>Ad Spend <span class="font-medium text-foreground">{{ formatMetric(performanceSpend, { currency: true }) }}</span></span>
           <span>Ad Sales <span class="font-medium text-foreground">{{ formatMetric(performanceSales, { currency: true }) }}</span></span>
           <span>ACoS <span class="font-medium text-foreground">{{ performanceAcos.toFixed(1) }}%</span></span>
-          <span>Optimization Events <span class="font-medium text-foreground">{{ performanceOptimizationEvents }}</span></span>
-          <span>Schedule Runs <span class="font-medium text-foreground">{{ performanceScheduleRuns }}</span></span>
-          <span>Active Schedules <span class="font-medium text-foreground">{{ performanceActiveSchedules }}</span></span>
+          <span>Optimization Events <span class="font-medium text-foreground">{{ performanceOptimizationEvents.toLocaleString('en-US') }}</span></span>
+          <span>Schedule Runs <span class="font-medium text-foreground">{{ performanceScheduleRuns.toLocaleString('en-US') }}</span></span>
+          <span>Active Schedules <span class="font-medium text-foreground">{{ performanceActiveSchedules.toLocaleString('en-US') }}</span></span>
         </div>
         <Card>
           <CardContent class="pt-6">
@@ -1045,12 +1052,12 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
         <div v-if="analyticsLoading" class="py-2 text-sm text-muted-foreground">
           Loading campaign analytics…
         </div>
-        <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
+        <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm tabular-nums text-muted-foreground">
           <!-- Look counters up by their stable key, never by their display label: the
                labels are translatable and a stale string silently returns 0. The list
                itself is category-driven, so a launch page does not report an
                optimisation event count of zero. -->
-          <span v-for="counter in headlineCounters" :key="counter.key">{{ counter.label }} <span class="font-medium text-foreground">{{ activityValue(counter.key) }}</span></span>
+          <span v-for="counter in headlineCounters" :key="counter.key">{{ counter.label }} <span class="font-medium text-foreground">{{ activityValue(counter.key).toLocaleString('en-US') }}</span></span>
         </div>
 
         <!-- The action's own trend: what it did, and what those campaigns earned. One card
@@ -1072,7 +1079,11 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
         <!-- Only an optimisation action keeps this row. A launch action has no first touch
              to measure and, since its charts became the single trend above, nothing left
              here either - so the whole row is absent rather than half empty. -->
-        <div v-if="!isLaunchAction" class="grid gap-3 lg:grid-cols-2">
+        <!-- Unequal by design: the ACoS comparison is the row main reading and takes the
+             wider track, while the two first-touch charts stack inside the narrower one. Side
+             by side inside a half-width card they were drawn about 380px wide and their
+             category labels were unreadable; stacked, each gets the full track. -->
+        <div v-if="!isLaunchAction" class="grid gap-3 lg:grid-cols-[minmax(0,7fr)_minmax(0,5fr)]">
           <!-- Chart 3: the honest cross-section. Our segment is not the cheapest
                per dollar of sales, and the campaign counts travel with the bars. -->
           <Card>
@@ -1101,23 +1112,23 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
                empty, and the back end is not asked for the aggregate either. -->
           <Card>
             <CardContent class="flex h-full flex-col gap-4 p-4">
-              <div class="grid gap-4 md:grid-cols-2">
+              <div class="flex flex-col gap-4">
                 <GroupedBarChart
-                  height-class="h-72"
+                  height-class="h-44"
                   :title="`首次触达前后 · ${firstTouch.windowDays} 天窗口`"
                   :categories="firstTouchVolume.categories"
                   :series="firstTouchVolume.series"
                   format="currency"
                 />
                 <GroupedBarChart
-                  height-class="h-72"
+                  height-class="h-44"
                   title="触达前后比率"
                   :categories="firstTouchRates.categories"
                   :series="firstTouchRates.series"
                   format="percent"
                 />
               </div>
-              <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
+              <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm tabular-nums text-muted-foreground">
                 <span>被触达活动数 <span class="font-medium text-foreground">{{ firstTouch.campaigns.toLocaleString('en-US') }}</span></span>
                 <span>活动·天数 <span class="font-medium text-foreground">{{ firstTouch.before.campaignDays.toLocaleString('en-US') }} → {{ firstTouch.after.campaignDays.toLocaleString('en-US') }}</span></span>
                 <span>每活动·天广告订单 <span class="font-medium text-foreground">{{ firstTouch.before.ordersPerCampaignDay.toFixed(2) }} → {{ firstTouch.after.ordersPerCampaignDay.toFixed(2) }}</span></span>
@@ -1156,31 +1167,30 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
               <TabsContent value="org" class="flex flex-col gap-4">
                 <!-- Distribution, not share: the biggest organization holds 4% of the
                      calls, so a ring would draw two thirds of itself as "Others". -->
-                <div class="grid gap-3 lg:grid-cols-2">
-                  <Card>
-                    <CardContent class="p-4">
-                      <KpiChart type="bar" height-class="h-72" title="组织使用量分布" :data="agentOrgUsageHistogram" />
-                      <p class="mt-2 text-xs text-muted-foreground">
-                        {{ agentOrgUsageCaption }}
-                      </p>
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent class="p-4">
-                      <ScatterChart
-                        height-class="h-72"
-                        title="使用强度：活跃天数 × 调用量"
-                        x-label="活跃天数"
-                        y-label="调用量"
-                        :points="agentIntensityPoints"
-                        :reference-lines="[{ axis: 'y', value: agentIntensity.p95, label: `每活跃天 p95 = ${agentIntensity.p95.toFixed(1)} 次` }]"
-                        :caption="`每个点为 Org+Profile（${agentIntensity.points.length} 个）。对角线之上＝把用量压在少数几天里，就是需要关注的异常；红色点表示每活跃天调用量已达总体 p95 以上。`"
-                      />
-                    </CardContent>
-                  </Card>
+                <!-- No inner cards: this tab already lives inside the page card, and a card
+                     in a card is containment with no meaning. The bands are separated by
+                     hairlines instead, which also buys the charts the padding back. -->
+                <div class="grid gap-6 lg:grid-cols-2">
+                  <div class="flex flex-col">
+                    <KpiChart type="bar" height-class="h-72" title="组织使用量分布" :data="agentOrgUsageHistogram" />
+                    <p class="mt-2 text-xs text-muted-foreground">
+                      {{ agentOrgUsageCaption }}
+                    </p>
+                  </div>
+                  <div class="flex flex-col">
+                    <ScatterChart
+                      height-class="h-72"
+                      title="使用强度：活跃天数 × 调用量"
+                      x-label="活跃天数"
+                      y-label="调用量"
+                      :points="agentIntensityPoints"
+                      :reference-lines="[{ axis: 'y', value: agentIntensity.p95, label: `每活跃天 p95 = ${agentIntensity.p95.toFixed(1)} 次` }]"
+                      :caption="`每个点为 Org+Profile（${agentIntensity.points.length} 个）。对角线之上＝把用量压在少数几天里，就是需要关注的异常；红色点表示每活跃天调用量已达总体 p95 以上。`"
+                    />
+                  </div>
                 </div>
-                <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
-                  <span>Organizations <span class="font-medium text-foreground">{{ agentAdoption.active }}</span></span>
+                <div class="flex flex-wrap items-center gap-x-6 gap-y-1 border-t pt-4 text-sm tabular-nums text-muted-foreground">
+                  <span>Organizations <span class="font-medium text-foreground">{{ agentAdoption.active.toLocaleString('en-US') }}</span></span>
                   <span>采纳率 <span class="font-medium text-foreground">{{ agentAdoption.rate.toFixed(1) }}%</span> <span class="text-xs">（{{ agentAdoption.active }} / {{ agentAdoption.total }} 个已接入组织）</span></span>
                   <span>Org+Profile Rows <span class="font-medium text-foreground">{{ agentOrgProfileFilteredRows.length }}</span></span>
                   <span>Total Tool Calls <span class="font-medium text-foreground">{{ agentTotalToolCalls }}</span></span>
@@ -1193,37 +1203,33 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
                 <!-- The two questions the tool tab exists for: is it used widely, and
                      do the people who use it come back? -->
                 <div class="grid gap-3 lg:grid-cols-2">
-                  <Card>
-                    <CardContent class="p-4">
-                      <ScatterChart
-                        height-class="h-72"
-                        title="工具采纳矩阵：广度 × 深度"
-                        x-label="使用组织数"
-                        y-label="每组织调用次数"
-                        :points="toolAdoptionPoints"
-                        :reference-lines="[
-                          { axis: 'x', value: toolAdoptionMedians.orgs, label: '中位广度' },
-                          { axis: 'y', value: toolAdoptionMedians.callsPerOrg, label: '中位深度' },
-                        ]"
-                        :caption="toolAdoptionCaption"
-                      />
-                    </CardContent>
-                  </Card>
-                  <Card>
-                    <CardContent class="p-4">
-                      <KpiChart type="bar" height-class="h-72" title="工具回访分布" :data="toolRepeatBuckets" />
-                      <p class="mt-2 text-xs text-muted-foreground">
-                        {{ toolRepeatCaption }}
-                      </p>
-                    </CardContent>
-                  </Card>
+                  <div class="flex flex-col">
+                    <ScatterChart
+                      height-class="h-72"
+                      title="工具采纳矩阵：广度 × 深度"
+                      x-label="使用组织数"
+                      y-label="每组织调用次数"
+                      :points="toolAdoptionPoints"
+                      :reference-lines="[
+                        { axis: 'x', value: toolAdoptionMedians.orgs, label: '中位广度' },
+                        { axis: 'y', value: toolAdoptionMedians.callsPerOrg, label: '中位深度' },
+                      ]"
+                      :caption="toolAdoptionCaption"
+                    />
+                  </div>
+                  <div class="flex flex-col">
+                    <KpiChart type="bar" height-class="h-72" title="工具回访分布" :data="toolRepeatBuckets" />
+                    <p class="mt-2 text-xs text-muted-foreground">
+                      {{ toolRepeatCaption }}
+                    </p>
+                  </div>
                 </div>
                 <!-- The counts the Tool Summary card used to hold: kept, because a
                      tool list without its totals cannot be read against anything. -->
-                <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
-                  <span>Tools <span class="font-medium text-foreground">{{ toolRows.length }}</span></span>
-                  <span>Total Calls <span class="font-medium text-foreground">{{ toolTotalCalls }}</span></span>
-                  <span>Errors <span class="font-medium text-foreground">{{ toolTotalErrors }}</span></span>
+                <div class="flex flex-wrap items-center gap-x-6 gap-y-1 border-t pt-4 text-sm tabular-nums text-muted-foreground">
+                  <span>Tools <span class="font-medium text-foreground">{{ toolRows.length.toLocaleString('en-US') }}</span></span>
+                  <span>Total Calls <span class="font-medium text-foreground">{{ toolTotalCalls.toLocaleString('en-US') }}</span></span>
+                  <span>Errors <span class="font-medium text-foreground">{{ toolTotalErrors.toLocaleString('en-US') }}</span></span>
                 </div>
                 <TableToolbar v-model:filters="toolFilters" v-model:range="dateRange" :columns="toolColumns" :rows="toolRowsSource" />
                 <DataTable :table="toolTable" :columns="toolCols" :data="toolRows" />

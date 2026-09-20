@@ -33,6 +33,14 @@ export type ColumnType
     | 'boolean'
   /** Counts and other plain numbers. */
     | 'number'
+  /**
+   * A large count, rendered compact (K/M/B) with the exact number on hover.
+   *
+   * Impressions and clicks are the columns where raw digits are noise - "5,132,479" has to be
+   * counted to be read, "5.1M" does not - while a schedule run count of 2,244 reads better as
+   * itself. So this is a per-column choice, not a property of every number.
+   */
+    | 'compact'
   /** Money; rendered compact (K/M) with the exact amount on hover. */
     | 'currency'
   /** A 0–100 percentage. */

@@ -60,6 +60,7 @@ const VALID_TYPES: ColumnType[] = [
   'connection',
   'boolean',
   'number',
+  'compact',
   'currency',
   'percent',
   'date',
@@ -387,6 +388,25 @@ describe('cellDisplay', () => {
   it('renders a ratio tuple as enabled/total and a split as its three series', () => {
     expect(cellDisplay({ v: [3, 5] }, spec('ratioTuple'))).toBe('3/5')
     expect(cellDisplay({ v: { sp: 1, sb: 2, sd: 3 } }, spec('split'))).toBe('SP 1 · SB 2 · SD 3')
+  })
+
+  it('compacts a large count but leaves a readable one alone', () => {
+    // Impressions and clicks are the columns where raw digits are noise.
+    expect(cellDisplay({ v: 5132479 }, spec('compact'))).toBe('5.1M')
+    expect(cellDisplay({ v: 39123456 }, spec('compact'))).toBe('39.1M')
+    expect(cellDisplay({ v: 4342 }, spec('compact'))).toBe('4.3K')
+    // Short counts stay exact rather than becoming "0.4K".
+    expect(cellDisplay({ v: 942 }, spec('compact'))).toBe('942')
+    expect(cellDisplay({ v: 0 }, spec('compact'))).toBe('0')
+  })
+
+  it('types impressions and clicks as compact in every table that has them', () => {
+    for (const [name, specs] of ALL_SETS) {
+      for (const [key, , type] of specs) {
+        if (key === 'impressions' || key === 'clicks')
+          expect(type, `${name}.${key}`).toBe('compact')
+      }
+    }
   })
 
   it('renders missing values as an em dash, never as zero', () => {

@@ -74,6 +74,7 @@ const OPERATORS: Record<ColumnType, OperatorDef[]> = {
   connection: [...ENUM_OPS, ...EMPTY_OPS],
   boolean: BOOLEAN_OPS,
   number: [...NUMBER_OPS, ...EMPTY_OPS],
+  compact: [...NUMBER_OPS, ...EMPTY_OPS],
   currency: [...NUMBER_OPS, ...EMPTY_OPS],
   percent: [...NUMBER_OPS, ...EMPTY_OPS],
   date: [...DATE_OPS, ...EMPTY_OPS],
@@ -115,7 +116,7 @@ export function valueEditorFor(type: ColumnType, op: FilterOperator): 'text' | '
     return 'none'
   if (type === 'date' || type === 'timestamp')
     return 'date'
-  if (type === 'number' || type === 'currency' || type === 'percent' || type === 'split' || type === 'ratioTuple')
+  if (type === 'number' || type === 'compact' || type === 'currency' || type === 'percent' || type === 'split' || type === 'ratioTuple')
     return 'number'
   if (type === 'list')
     return 'list'
@@ -260,6 +261,7 @@ export function matchFilter(row: Record<string, any>, spec: ColumnSpec, filter: 
     case 'boolean':
       return op === 'isTrue' ? !!raw : !raw
     case 'number':
+    case 'compact':
     case 'currency':
     case 'percent':
       return numberMatch(Number(raw), op, filter.values)

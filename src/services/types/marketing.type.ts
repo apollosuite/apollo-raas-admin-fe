@@ -286,3 +286,76 @@ export interface WeComLeadTriggerResponse {
   cooldown_until?: string | null
   message: string
 }
+
+export interface WeComMomentAccount {
+  userid: string
+  name: string
+  avatar?: string | null
+}
+
+export interface WeComMomentTag {
+  id: string
+  name: string
+  group_name: string
+}
+
+export interface WeComMomentSummary {
+  id: string
+  name: string
+  category: string
+  content: string
+  status: 'upcoming' | 'publishing' | 'posted' | 'error'
+  scheduled_at: string
+  posted_at?: string | null
+  total_accounts: number
+  posted_accounts: number
+  likes_count: number
+  comments_count: number
+  reposts_count?: number | null
+  account_names: string[]
+  thumbnail_url?: string | null
+  error_message?: string | null
+}
+
+export interface WeComMomentListResponse {
+  items: WeComMomentSummary[]
+  total: number
+  page: number
+  page_size: number
+  total_pages: number
+}
+
+export interface WeComMomentDetail extends Omit<WeComMomentSummary, 'account_names' | 'thumbnail_url'> {
+  audience_mode: string
+  audience_filters: Record<string, unknown>
+  target_count: number
+  images: Array<{ sort_order: number, filename: string, url?: string | null }>
+  deliveries: Array<{
+    userid: string
+    account_name: string
+    account_avatar?: string | null
+    status: string
+    posted_at?: string | null
+    error_message?: string | null
+  }>
+  interactions: Array<{
+    userid: string
+    interaction_type: 'like' | 'comment' | 'repost'
+    actor_userid: string
+    actor_name?: string | null
+    content?: string | null
+    interaction_time?: string | null
+  }>
+}
+
+export interface WeComMomentAudienceRequest {
+  mode: 'explicit' | 'filter'
+  external_userids: string[]
+  filters: Record<string, string | string[]>
+  account_userids: string[]
+}
+
+export interface WeComMomentAudiencePreview {
+  total: number
+  items: Array<{ external_userid: string, name?: string | null, corp_name?: string | null }>
+}

@@ -59,6 +59,20 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/customer-tracking/': RouteRecordInfo<
+      '/customer-tracking/',
+      '/customer-tracking',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/customer-tracking/[...path]': RouteRecordInfo<
+      '/customer-tracking/[...path]',
+      '/customer-tracking/:path(.*)',
+      { path: ParamValue<true> },
+      { path: ParamValue<false> },
+      | never
+    >,
     '/errors': RouteRecordInfo<
       '/errors',
       '/errors',
@@ -127,6 +141,13 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/marketing/qr-codes': RouteRecordInfo<
+      '/marketing/qr-codes',
+      '/marketing/qr-codes',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/marketing/wecom-chat-history': RouteRecordInfo<
       '/marketing/wecom-chat-history',
       '/marketing/wecom-chat-history',
@@ -171,6 +192,20 @@ declare module 'vue-router/auto-routes' {
       Record<never, never>,
       | never
     >,
+    '/marketing/wecom-moments': RouteRecordInfo<
+      '/marketing/wecom-moments',
+      '/marketing/wecom-moments',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/marketing/wecom-moments.create': RouteRecordInfo<
+      '/marketing/wecom-moments.create',
+      '/marketing/wecom-moments/create',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
     '/raas/': RouteRecordInfo<
       '/raas/',
       '/raas',
@@ -181,6 +216,34 @@ declare module 'vue-router/auto-routes' {
     '/raas/dashboard/': RouteRecordInfo<
       '/raas/dashboard/',
       '/raas/dashboard',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/sales/companies': RouteRecordInfo<
+      '/sales/companies',
+      '/sales/companies',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/sales/dashboard': RouteRecordInfo<
+      '/sales/dashboard',
+      '/sales/dashboard',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/sales/deals': RouteRecordInfo<
+      '/sales/deals',
+      '/sales/deals',
+      Record<never, never>,
+      Record<never, never>,
+      | never
+    >,
+    '/sales/orders': RouteRecordInfo<
+      '/sales/orders',
+      '/sales/orders',
       Record<never, never>,
       Record<never, never>,
       | never
@@ -265,6 +328,18 @@ declare module 'vue-router/auto-routes' {
       views:
         | never
     }
+    'src/pages/customer-tracking/index.vue': {
+      routes:
+        | '/customer-tracking/'
+      views:
+        | never
+    }
+    'src/pages/customer-tracking/[...path].vue': {
+      routes:
+        | '/customer-tracking/[...path]'
+      views:
+        | never
+    }
     'src/pages/errors.vue': {
       routes:
         | '/errors'
@@ -325,6 +400,12 @@ declare module 'vue-router/auto-routes' {
       views:
         | never
     }
+    'src/pages/marketing/qr-codes.vue': {
+      routes:
+        | '/marketing/qr-codes'
+      views:
+        | never
+    }
     'src/pages/marketing/wecom-chat-history.vue': {
       routes:
         | '/marketing/wecom-chat-history'
@@ -364,6 +445,18 @@ declare module 'vue-router/auto-routes' {
       views:
         | never
     }
+    'src/pages/marketing/wecom-moments.vue': {
+      routes:
+        | '/marketing/wecom-moments'
+      views:
+        | never
+    }
+    'src/pages/marketing/wecom-moments.create.vue': {
+      routes:
+        | '/marketing/wecom-moments.create'
+      views:
+        | never
+    }
     'src/pages/raas/index.vue': {
       routes:
         | '/raas/'
@@ -373,6 +466,30 @@ declare module 'vue-router/auto-routes' {
     'src/pages/raas/dashboard/index.vue': {
       routes:
         | '/raas/dashboard/'
+      views:
+        | never
+    }
+    'src/pages/sales/companies.vue': {
+      routes:
+        | '/sales/companies'
+      views:
+        | never
+    }
+    'src/pages/sales/dashboard.vue': {
+      routes:
+        | '/sales/dashboard'
+      views:
+        | never
+    }
+    'src/pages/sales/deals.vue': {
+      routes:
+        | '/sales/deals'
+      views:
+        | never
+    }
+    'src/pages/sales/orders.vue': {
+      routes:
+        | '/sales/orders'
       views:
         | never
     }

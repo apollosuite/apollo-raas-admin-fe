@@ -7,9 +7,9 @@ import AutoImport from 'unplugin-auto-import/vite'
 import Component from 'unplugin-vue-components/vite'
 import { VueRouterAutoImports } from 'unplugin-vue-router'
 import VueRouter from 'unplugin-vue-router/vite'
-import { defineConfig } from 'vite'
 import vueDevTools from 'vite-plugin-vue-devtools'
 import Layouts from 'vite-plugin-vue-layouts'
+import { defineConfig } from 'vitest/config'
 
 const RouteGenerateExclude = ['**/components/**', '**/layouts/**', '**/data/**', '**/types/**']
 
@@ -60,8 +60,27 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  server: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    },
+  },
+  preview: {
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'credentialless',
+    },
+  },
   esbuild: {
     drop: ['debugger'],
     pure: ['console.log'],
+  },
+  test: {
+    // Component tests mount real SFCs, so they need a DOM. jsdom was already a
+    // devDependency; only the environment was missing, which is why the
+    // product-table suite failed with `document is not defined`.
+    environment: 'jsdom',
+    include: ['src/**/*.test.ts'],
   },
 })

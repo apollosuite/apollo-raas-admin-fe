@@ -1,0 +1,18 @@
+[
+  {
+    "date": "2026-08-31",
+    "macrostructure": "Workbench",
+    "theme": "Studio",
+    "enrichment": "none",
+    "brief": "Customer Tracking — Studio reading-comfort pass (data-dense removed), shadcn-vue data-table + green accent",
+    "scope": "app"
+  },
+  {
+    "date": "2026-08-31",
+    "macrostructure": "Workbench",
+    "theme": "Cobalt",
+    "enrichment": "none",
+    "brief": "Customer Tracking data workbench redesign",
+    "scope": "app"
+  }
+]

@@ -5,15 +5,23 @@ import { createI18n } from 'vue-i18n'
 import en from './en.json'
 import zh from './zh.json'
 
-export function setupI18n(app: App) {
-  const i18n = createI18n({
+/**
+ * The app's i18n instance, as a value rather than an installed plugin, so tests
+ * can register the exact same instance (and pick a locale) via
+ * `mount(..., { global: { plugins: [createAppI18n()] } })`.
+ */
+export function createAppI18n(locale: 'en' | 'zh' = 'en') {
+  return createI18n({
     legacy: false,
-    locale: 'en',
+    locale,
     fallbackLocale: 'en',
     messages: {
       zh,
       en,
     },
   })
-  app.use(i18n)
+}
+
+export function setupI18n(app: App) {
+  app.use(createAppI18n())
 }

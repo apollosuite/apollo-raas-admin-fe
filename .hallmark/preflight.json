@@ -1,0 +1,9 @@
+{
+  "date": "2026-08-31",
+  "framework": "Vue 3 + Vite + Tailwind CSS 4",
+  "font_stack": "shadcn defaults; Customer Tracking uses Space Grotesk + Geist + JetBrains Mono tokens",
+  "palette": "shadcn neutral globals; Cobalt page-scoped tokens",
+  "motion": "motion-v installed; page uses restrained CSS transitions",
+  "spacing": "Tailwind spacing utilities with 4-point token scale",
+  "scope": "Customer Tracking app pages"
+}

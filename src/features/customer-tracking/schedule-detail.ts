@@ -264,6 +264,41 @@ export interface PlacementMove {
   changed: boolean
 }
 
+/**
+ * One plotted day on which the schedule ran, for the trend chart's run strip.
+ *
+ * The trend has one point per day, so several runs on one morning collapse into one
+ * mark; `changes` is summed because the strip shades the day by how much the schedule
+ * moved, not by how often it woke up.
+ */
+export interface RunDay {
+  date: string
+  runs: number
+  changes: number
+}
+
+/**
+ * Collapse executions onto the trend's dates.
+ *
+ * Runs outside the performance window are dropped: the change log runs through today
+ * while the performance window ends two days ago, and a marker past the last plotted
+ * day has nowhere to sit. A day the schedule ran but changed nothing is kept - the
+ * strip distinguishes "did not run" from "ran and moved nothing".
+ */
+export function runDays(runs: readonly ChangelogRun[], window: DateRange): RunDay[] {
+  const byDate = new Map<string, RunDay>()
+  for (const run of runs) {
+    const date = String(run.runTime ?? '').slice(0, 10)
+    if (!date || date < window.from || date > window.to)
+      continue
+    const day = byDate.get(date) ?? { date, runs: 0, changes: 0 }
+    day.runs += 1
+    day.changes += num(run.changes)
+    byDate.set(date, day)
+  }
+  return [...byDate.values()].sort((a, b) => a.date.localeCompare(b.date))
+}
+
 export interface ChangelogChange {
   runTime: string
   campaignId?: string | null

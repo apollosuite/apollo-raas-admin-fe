@@ -140,4 +140,12 @@
   body {
     @apply bg-background text-foreground;
   }
+  /* A page must never scroll sideways. Wide tables own their own scroll containers,
+     so the document itself only ever overflows by a few pixels - which at 320px is
+     enough to shift the whole shell. `clip` rather than `hidden` on purpose: hidden
+     creates a scroll container and breaks sticky/fixed descendants. */
+  html,
+  body {
+    overflow-x: clip;
+  }
 }

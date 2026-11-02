@@ -427,6 +427,55 @@ export const CAMPAIGN_COLUMNS: readonly ColumnSpec[] = [
   ['placementsOptimized', 'Placements Optimized', 'number'],
 ]
 
+/**
+ * Performance L3: the campaigns one schedule managed or launched, over its window.
+ *
+ * `Targetings` exists only for a bid schedule: a budget/placement/launch schedule
+ * acts on campaigns, and a column that is structurally always 0 is a lie about the
+ * grain rather than a measurement. The rates are derived client-side from the same
+ * row's sums, so they filter and sort like every other rate in the tool.
+ */
+export function scheduleCampaignColumns(withTargeting: boolean): readonly ColumnSpec[] {
+  return [
+    ['campaignName', 'Campaign', 'text'],
+    // Money and efficiency first: on a 1600px screen the table is wider than its card,
+    // and ACoS behind a horizontal scroll is the one number this page exists to show.
+    ['adSpend', 'Ad Spend', 'currency'],
+    ['adSales', 'Ad Sales', 'currency'],
+    ['acos', 'ACoS', 'percent'],
+    ['adOrders', 'Ad Orders', 'number'],
+    ['state', 'State', 'enum'],
+    ['impressions', 'Impressions', 'compact'],
+    ['clicks', 'Clicks', 'compact'],
+    ['cpc', 'CPC', 'currency'],
+    ['cvr', 'CVR', 'percent'],
+    ...(withTargeting ? [['targets', 'Targetings', 'number'] as const] : []),
+    ['budget', 'Latest Budget', 'currency'],
+    ['daysActive', 'Active Days', 'number'],
+  ]
+}
+
+/**
+ * Performance L3, the targeting grain of a bid schedule.
+ *
+ * The targeting expression is the identity cell: two rows of one campaign are told
+ * apart by `broad match "mat"` vs `exact match "mat"`, and truncating it is what makes
+ * a targeting table unreadable.
+ */
+export const SCHEDULE_TARGETING_COLUMNS: readonly ColumnSpec[] = [
+  ['targetExpression', 'Targeting', 'text'],
+  ['campaignName', 'Campaign', 'text'],
+  ['matchType', 'Match Type', 'enum'],
+  ['impressions', 'Impressions', 'compact'],
+  ['clicks', 'Clicks', 'compact'],
+  ['adOrders', 'Ad Orders', 'number'],
+  ['adSpend', 'Ad Spend', 'currency'],
+  ['adSales', 'Ad Sales', 'currency'],
+  ['acos', 'ACoS', 'percent'],
+  ['cpc', 'CPC', 'currency'],
+  ['cvr', 'CVR', 'percent'],
+]
+
 export const SCHEDULE_COLUMNS: readonly ColumnSpec[] = [
   ['name', 'Schedules', 'text'],
   ['status', 'Status', 'enum'],
@@ -738,6 +787,8 @@ export const DEFAULT_SORTS: Record<string, { id: string, desc: boolean }[]> = {
   'performance-profiles': [{ id: 'adSpendSplit', desc: true }],
   'performance-schedules': [{ id: 'runs', desc: true }],
   'perf-schedules': [{ id: 'scheduleRuns', desc: true }],
+  'schedule-campaigns': [{ id: 'adSpend', desc: true }],
+  'schedule-targetings': [{ id: 'adSpend', desc: true }],
   'campaigns': [{ id: 'adSpend', desc: true }],
   'schedules': [{ id: 'created', desc: true }],
   'agent-org-profiles': [{ id: 'toolCalls', desc: true }],

@@ -53,7 +53,14 @@ export async function fetchDatasetManifest(): Promise<DatasetManifest> {
   return res.data
 }
 
-async function fetchArrow(url: string): Promise<Uint8Array> {
+/**
+ * Fetch an Arrow IPC aggregate.
+ *
+ * Exported for the schedule-detail loader: the L3 page pulls its own four
+ * aggregates, but every Arrow request in the app must keep going through this one
+ * function so the CORS and cache-busting rules stay in one place.
+ */
+export async function fetchArrow(url: string): Promise<Uint8Array> {
   const { axiosInstance } = useAxios()
   // No custom request headers here on purpose: anything outside the CORS
   // safelist turns a simple GET into a preflighted request, and a header the API
@@ -83,8 +90,12 @@ async function postArrow(url: string, body: Record<string, unknown>): Promise<Ui
  * from the length and the first/last id would collide on exactly that case. FNV-1a
  * over every character is fast enough for a few thousand ids and hashes in the
  * browser without making the request async.
+ *
+ * Exported because the L3 page names its DuckDB relations after a (schedule,
+ * window) scope: one relation per scope means an ingest is always a first ingest,
+ * never a rewrite of a live table (see loadArrowDataset).
  */
-function hashIds(ids: readonly string[]): string {
+export function hashIds(ids: readonly string[]): string {
   let hash = 0x811C9DC5
   for (const id of ids) {
     for (let i = 0; i < id.length; i++) {
@@ -1501,6 +1512,10 @@ export function useDashboardData() {
     // The L2 schedule page keeps its own schedule rows (one per schedule) and pulls
     // the campaign-grain aggregates separately, keyed by action + profile scope.
     'schedules': ['performanceProfiles', 'performanceSchedules', 'actionActivityDaily'],
+    // The L3 detail page resolves its schedule (name, status, action type) from the
+    // same L2 dim. Its performance and change-log aggregates are pulled by the page
+    // component itself, because they are scoped to one action id, not to the range.
+    'schedule-detail': ['performanceProfiles', 'performanceSchedules'],
     'agent': ['agentOrgProfiles', 'agentUsageIntensity', 'agentAllOrgs', 'toolStats', 'agentToolPairs'],
     'agent-org': ['agentOrgProfiles', 'agentOrgTools'],
     'agent-tool-orgs': ['agentToolOrgs', 'agentToolTrend'],

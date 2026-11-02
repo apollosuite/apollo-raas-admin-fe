@@ -61,6 +61,7 @@ import { chartTokens } from '@/features/customer-tracking/components/chart-theme
 import GroupedBarChart from '@/features/customer-tracking/components/grouped-bar-chart.vue'
 import KpiChart from '@/features/customer-tracking/components/kpi-chart.vue'
 import ScatterChart from '@/features/customer-tracking/components/scatter-chart.vue'
+import ScheduleDetail from '@/features/customer-tracking/components/schedule-detail.vue'
 import StatTile from '@/features/customer-tracking/components/stat-tile.vue'
 import StatusRadialChart from '@/features/customer-tracking/components/status-radial-chart.vue'
 import TableToolbar from '@/features/customer-tracking/components/table-toolbar.vue'
@@ -96,7 +97,7 @@ const route = useRoute(); const router = useRouter(); const search = ref(''); co
 const { dateRange } = useFilterContext(); const dateRangeLabel = computed(() => `${dateRange.value.from} ~ ${dateRange.value.to}`)
 const { organizations, accountProfilesData, campaigns, toolStats, agentOrgProfiles, agentUsageRows, agentToolPairs, agentAllOrgs, agentOrgTools, agentToolOrgs, agentToolTrend, agentOrgChats, adsAccounts, subAccounts, ready, error, loadPage, loadCampaigns, campaignsLoading, analyticsLoading, loadScheduleAnalytics, loadAgentChats, agentChatsLoading, performanceProfiles, performanceSchedules, performanceDailyRows, actionActivityRows, actionTrendMoneyRows, perfAttribution, perfFirstTouch } = useDashboardData()
 const path = computed(() => String((route.params as any).path || 'accounts').split('/').filter(Boolean))
-const page = computed(() => path.value[0] === 'accounts' && path.value[1] ? 'account-detail' : path.value[0] === 'performance' && path.value[1] === 'profile' && path.value[3] === 'schedules' ? 'schedules' : path.value[0] === 'performance' && path.value[1] === 'profile' ? 'profile' : path.value[0] === 'performance' && path.value[1] === 'schedules' ? 'schedules' : path.value[0] === 'agent' && path.value[1] === 'org' ? 'agent-org' : path.value[0] === 'agent' && path.value[1] === 'tool' ? 'agent-tool-orgs' : path.value[0] || 'accounts')
+const page = computed(() => path.value[0] === 'accounts' && path.value[1] ? 'account-detail' : path.value[0] === 'performance' && path.value[1] === 'profile' && path.value[3] === 'schedules' && path.value[5] ? 'schedule-detail' : path.value[0] === 'performance' && path.value[1] === 'schedules' && path.value[3] ? 'schedule-detail' : path.value[0] === 'performance' && path.value[1] === 'profile' && path.value[3] === 'schedules' ? 'schedules' : path.value[0] === 'performance' && path.value[1] === 'profile' ? 'profile' : path.value[0] === 'performance' && path.value[1] === 'schedules' ? 'schedules' : path.value[0] === 'agent' && path.value[1] === 'org' ? 'agent-org' : path.value[0] === 'agent' && path.value[1] === 'tool' ? 'agent-tool-orgs' : path.value[0] || 'accounts')
 /**
  * The route scope of the two Agent L2 pages: the organization id, or the tool name.
  * Both are read by the hook's scoped queries, so the page never renders one scope's
@@ -107,11 +108,11 @@ const agentRoute = computed(() => page.value === 'agent-org'
   : page.value === 'agent-tool-orgs'
     ? { tool: path.value[2] }
     : undefined)
-const campaignProfileId = computed(() => page.value === 'profile' || (page.value === 'schedules' && path.value[1] === 'profile') ? path.value[2] : undefined)
+const campaignProfileId = computed(() => page.value === 'profile' || ((page.value === 'schedules' || page.value === 'schedule-detail') && path.value[1] === 'profile') ? path.value[2] : undefined)
 // The catch-all page component is reused across routes, so free-text search must not survive
 // navigation — otherwise a term typed on L1 silently empties the L2 tables.
 watch(path, () => { search.value = ''; loadPage(page.value, campaignProfileId.value, agentRoute.value) }, { immediate: true })
-const account = computed(() => organizations.value.find(a => String(a.orgId) === String(path.value[1])) || organizations.value[0]); const action = computed(() => page.value === 'schedules' ? decodeURIComponent(path.value[path.value[1] === 'profile' ? 4 : 2] || '') : ''); const scopedProfileId = computed(() => page.value !== 'schedules' ? null : path.value[1] === 'profile' ? path.value[2] : null)
+const account = computed(() => organizations.value.find(a => String(a.orgId) === String(path.value[1])) || organizations.value[0]); const action = computed(() => page.value === 'schedules' || page.value === 'schedule-detail' ? decodeURIComponent(path.value[path.value[1] === 'profile' ? 4 : 2] || '') : ''); const scopedProfileId = computed(() => page.value !== 'schedules' && page.value !== 'schedule-detail' ? null : path.value[1] === 'profile' ? path.value[2] : null)
 /**
  * Identity for the Performance L2 profile page, from the page-level export.
  *
@@ -122,6 +123,27 @@ const account = computed(() => organizations.value.find(a => String(a.orgId) ===
  * measurement, so the first match is the whole measurement.
  */
 const perfProfile = computed(() => performanceProfiles.value.find(p => p.amazonProfileId === path.value[2]))
+/**
+ * The schedule the L3 page is about, resolved from the dim export.
+ *
+ * The route carries the id; the dim carries the identity, the action type and the
+ * profile. Deliberately no fallback to "the first schedule": an id the export does
+ * not know (a schedule created in the last ingest window, or a deleted one) must
+ * show a not-found note, never another schedule's numbers.
+ */
+const scheduleDetailId = computed(() => page.value !== 'schedule-detail' ? '' : decodeURIComponent(path.value[path.value[1] === 'profile' ? 5 : 3] || ''))
+const perfScheduleRow = computed(() => performanceSchedules.value.find(s => s.scheduleId === scheduleDetailId.value && (!scopedProfileId.value || s.amazonProfileId === scopedProfileId.value)))
+/** The URL names the action type; the dim is authoritative if the two disagree. */
+const scheduleDetailAction = computed(() => perfScheduleRow.value?.actionType || action.value)
+/** The L2 page the L3 page hangs off, keeping the profile scope it was opened from. */
+const schedulesHref = computed(() => scopedProfileId.value
+  ? `/customer-tracking/performance/profile/${scopedProfileId.value}/schedules/${encodeURIComponent(action.value)}`
+  : `/customer-tracking/performance/schedules/${encodeURIComponent(action.value)}`)
+function scheduleDetailHref(s: any) {
+  return scopedProfileId.value
+    ? `/customer-tracking/performance/profile/${scopedProfileId.value}/schedules/${encodeURIComponent(action.value)}/${encodeURIComponent(s.scheduleId)}`
+    : `/customer-tracking/performance/schedules/${encodeURIComponent(action.value)}/${encodeURIComponent(s.scheduleId)}`
+}
 const includesSearch = (value: unknown) => JSON.stringify(value).toLowerCase().includes(search.value.toLowerCase())
 // The campaign Arrow was fetched for the profile in the URL, so the URL - not a
 // lookup that can fail - decides which rows belong to this page.
@@ -147,6 +169,7 @@ const title = computed(() => {
     case 'performance': return 'Performance'
     case 'profile': return perfProfile.value?.name ?? path.value[2] ?? 'Performance'
     case 'schedules': return `${actionCn[action.value] || action.value} · Schedules`
+    case 'schedule-detail': return perfScheduleRow.value?.scheduleName ?? 'Schedule'
     case 'agent': return 'Agent Analytics'
     case 'agent-org': return `${agentOrgName.value || path.value[2] || ''} · Org Details`
     case 'agent-tool-orgs': return `Orgs using ${agentToolName.value}`
@@ -171,6 +194,15 @@ const breadcrumbs = computed(() => {
     if (scopedProfileId.value)
       add(perfProfile.value?.name ?? scopedProfileId.value, `/customer-tracking/performance/profile/${scopedProfileId.value}`)
     add(`${actionCn[action.value] || action.value} Schedules`)
+  }
+  else if (page.value === 'schedule-detail') {
+    // The schedule's own page sits under the action's schedule list, so the crumb
+    // back is that list - with the profile scope it was opened from.
+    add('Performance', '/customer-tracking/performance')
+    if (scopedProfileId.value)
+      add(perfProfile.value?.name ?? scopedProfileId.value, `/customer-tracking/performance/profile/${scopedProfileId.value}`)
+    add(`${actionCn[action.value] || action.value} Schedules`, schedulesHref.value)
+    add(perfScheduleRow.value?.scheduleName ?? scheduleDetailId.value)
   }
   else if (page.value === 'agent-org') {
     add('Agent Analytics', '/customer-tracking/agent')
@@ -709,7 +741,7 @@ watchDebounced([page, action, campaignProfileId, scheduleScopeIds], () => {
   if (page.value === 'schedules' && action.value)
     void loadScheduleAnalytics(action.value, campaignProfileId.value, scheduleScopeIds.value)
 }, { immediate: true, debounce: 400, maxWait: 2000 })
-const activePerfScheduleCols = computed(() => makeColumns(activePerfScheduleColumns.value, { nameKey: 'scheduleName', badgeKeys: ['status', 'lastRunStatus'], navigate }))
+const activePerfScheduleCols = computed(() => makeColumns(activePerfScheduleColumns.value, { nameKey: 'scheduleName', badgeKeys: ['status', 'lastRunStatus'], href: scheduleDetailHref, navigate }))
 // The frozen identity of the Agent tables is the organization: it is what the L2 page
 // is about, and it is the link that opens it.
 const agentOrgProfileCols = makeColumns(agentOrgProfileColumns, { nameKey: 'organization', href: (r: any) => `/customer-tracking/agent/org/${r.orgId}`, navigate })
@@ -740,7 +772,10 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
 <template>
   <BasicPage :title="title">
     <template #actions>
-      <div class="relative">
+      <!-- The page-level search filters the rows of the table a page is built around.
+           The L3 page has two tables with their own column filters, so a global box
+           that silently emptied nothing would be a false affordance. -->
+      <div v-if="page !== 'schedule-detail'" class="relative">
         <Search class="text-muted-foreground absolute left-2.5 top-1/2 size-4 -translate-y-1/2" />
         <Input v-model="search" class="h-9 w-48 pl-8 md:w-64" placeholder="Search…" />
       </div>
@@ -1149,6 +1184,33 @@ const toolOrgTable = generateVueTable<any>({ columns: toolOrgCols, data: () => t
             <DataTable :table="perfScheduleRowTable" :columns="activePerfScheduleCols" :data="perfScheduleTableRows" />
           </CardContent>
         </Card>
+      </template>
+
+      <!-- Schedule detail (L3): what this one schedule's campaigns did, and what the
+           schedule changed to get there. The identity line is resolved from the L2
+           dim; a schedule id the export does not know shows a note, never another
+           schedule's numbers. -->
+      <template v-else-if="page === 'schedule-detail'">
+        <template v-if="perfScheduleRow">
+          <div class="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm tabular-nums text-muted-foreground">
+            <Badge variant="secondary">
+              {{ actionCn[action] || scheduleDetailAction }}
+            </Badge>
+            <span>状态 <span class="font-medium text-foreground">{{ perfScheduleRow.status }}</span></span>
+            <span>最近执行 <span class="font-medium text-foreground" :title="perfScheduleRow.lastRunTime">{{ (perfScheduleRow.lastRunTime || '').slice(0, 16) }}</span></span>
+            <span>最近结果 <span class="font-medium text-foreground">{{ perfScheduleRow.lastRunStatus }}</span></span>
+            <span>Sub Account <span class="font-medium text-foreground">{{ perfScheduleRow.subAccount }}</span></span>
+            <span>Profile <span class="font-medium text-foreground">{{ perfScheduleRow.profileName }}</span></span>
+          </div>
+          <ScheduleDetail
+            :key="`${scheduleDetailAction}/${scheduleDetailId}`"
+            :action-type="scheduleDetailAction"
+            :action-id="scheduleDetailId"
+          />
+        </template>
+        <div v-else class="rounded-md border px-3 py-2 text-sm text-muted-foreground">
+          Schedule {{ scheduleDetailId }} 不在当前的 schedule 导出里（可能刚刚创建，或已被删除）。
+        </div>
       </template>
 
       <!-- Agent Analytics L1: the org+profile roll-up, and the tool-level view. -->

@@ -1,5 +1,15 @@
 [
   {
+    "date": "2026-11-02",
+    "macrostructure": "Stat-Led",
+    "theme": "app-system",
+    "enrichment": "none",
+    "brief": "Performance L3 schedule detail — stat-led campaign/targeting performance plus a run-ledger change log",
+    "scope": "page",
+    "theme_axes": "light / geometric-sans (system, locked) / neutral-ink",
+    "notes": "Differs from the two Workbench builds by macrostructure; the palette is the app's locked shadcn system, no page theme."
+  },
+  {
     "date": "2026-08-31",
     "macrostructure": "Workbench",
     "theme": "Studio",

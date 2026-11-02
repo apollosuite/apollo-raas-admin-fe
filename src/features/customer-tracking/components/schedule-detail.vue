@@ -36,6 +36,7 @@ import type { TrendMetric } from '../performance-analytics'
 import { DEFAULT_SORTS, makeColumns, SCHEDULE_TARGETING_COLUMNS, scheduleCampaignColumns } from '../columns'
 import { formatExact, formatMetric } from '../format'
 import {
+  runDays as buildRunDays,
   campaignTotals,
   coverage,
   dailyPoints,
@@ -85,6 +86,15 @@ const supportsChangelog = computed(() => hasChangelog(props.actionType))
 const totals = computed(() => campaignTotals(campaigns.value))
 const cover = computed(() => coverage(daily.value, windows.performance))
 const trendRows = computed(() => dailyPoints(daily.value, windows.performance) as unknown as Record<string, unknown>[])
+/**
+ * The days this schedule ran, for the trend's run strip.
+ *
+ * Only the families with a change log have runs to mark; a launch schedule creates
+ * campaigns and never executes against them, so its chart stays a plain trend. The runs
+ * are keyed to the change-log window, which starts on the performance window's first day
+ * and runs through today - `runDays` drops the days past the chart's end.
+ */
+const chartRunDays = computed(() => (supportsChangelog.value ? buildRunDays(changelogRuns.value, windows.performance) : []))
 
 const TREND_METRICS: readonly TrendMetric[] = [
   { key: 'adSpend', label: '广告花费', currency: true },
@@ -211,13 +221,17 @@ const targetingTable = generateVueTable<any>({
       </section>
 
       <Card>
-        <CardContent class="p-4">
+        <CardContent class="flex flex-col gap-2 p-4">
           <TrackingChart
             title="按天表现"
             :rows="trendRows"
             :metrics="TREND_METRICS"
             :default-metrics="TREND_DEFAULT"
+            :run-days="chartRunDays"
           />
+          <p v-if="chartRunDays.length" class="text-xs text-muted-foreground">
+            底部色带是该计划在窗口内的执行日：色带越高表示当天累计调整项越多，细线表示当天执行了但没有实际改动；没有色带的日期表示当天未执行。
+          </p>
         </CardContent>
       </Card>
 

@@ -13,6 +13,7 @@ import {
   hasTargeting,
   placementMoves,
   runBarPercent,
+  runDays,
   scheduleFamily,
   scheduleWindows,
   shiftIsoDay,
@@ -227,6 +228,36 @@ describe('changelogTotals', () => {
 
   it('survives a schedule that has not run in the window', () => {
     expect(changelogTotals([])).toMatchObject({ runs: 0, changes: 0, busiest: null, latest: null })
+  })
+})
+
+describe('runDays', () => {
+  const window = { from: '2026-10-02', to: '2026-10-04' }
+
+  it('collapses several runs on one day and sums their changes', () => {
+    const days = runDays([
+      run({ runTime: '2026-10-02 09:00:00', changes: 10 }),
+      run({ runTime: '2026-10-02 17:00:00', changes: 5 }),
+      run({ runTime: '2026-10-03 09:00:00', changes: 0 }),
+    ], window)
+    expect(days).toEqual([
+      { date: '2026-10-02', runs: 2, changes: 15 },
+      // A run that changed nothing is still a day the schedule ran.
+      { date: '2026-10-03', runs: 1, changes: 0 },
+    ])
+  })
+
+  it('drops runs outside the performance window', () => {
+    const days = runDays([
+      run({ runTime: '2026-10-01 23:00:00' }),
+      run({ runTime: '2026-10-04 23:00:00' }),
+      run({ runTime: '2026-10-05 09:00:00' }),
+    ], window)
+    expect(days.map(day => day.date)).toEqual(['2026-10-04'])
+  })
+
+  it('is empty when the schedule never ran in the window', () => {
+    expect(runDays([], window)).toEqual([])
   })
 })
 

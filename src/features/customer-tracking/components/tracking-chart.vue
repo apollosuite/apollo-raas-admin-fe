@@ -1,13 +1,14 @@
 <script setup lang="ts">
 /* eslint-disable style/max-statements-per-line */
-import { LineChart } from 'echarts/charts'
-import { GridComponent, LegendComponent, TitleComponent, TooltipComponent } from 'echarts/components'
+import { BarChart, LineChart } from 'echarts/charts'
+import { GraphicComponent, GridComponent, LegendComponent, TitleComponent, TooltipComponent } from 'echarts/components'
 import { use } from 'echarts/core'
 import * as echarts from 'echarts/core'
 import { CanvasRenderer } from 'echarts/renderers'
-import { onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 
 import type { TrendMetric } from '../performance-analytics'
+import type { RunDay } from '../schedule-detail'
 
 import { formatMetric } from '../format'
 import { MAX_TREND_METRICS, toggleTrendMetric } from '../performance-analytics'
@@ -25,6 +26,11 @@ import { chartTokens } from './chart-theme'
  * the baseline and reads as "nothing happened". A panel per unit keeps every series
  * legible, and stacking the panels in a single chart keeps one date lined up across
  * them with one tooltip reporting every metric.
+ *
+ * An optional `runDays` strip under the plot marks the days a schedule executed, with
+ * each day's bar height standing for how much it changed. Full-height guide lines were
+ * the obvious alternative, but a schedule that runs daily turns them into a grid; a
+ * strip reads the same cadence without competing with the series.
  */
 const props = withDefaults(defineProps<{
   title?: string
@@ -33,9 +39,11 @@ const props = withDefaults(defineProps<{
   metrics: readonly TrendMetric[]
   /** Keys to select on first render. Defaults to the first two metrics. */
   defaultMetrics?: readonly string[]
-}>(), { title: '', defaultMetrics: undefined })
+  /** Days the schedule ran, for the strip; omitted on pages without a schedule. */
+  runDays?: readonly RunDay[]
+}>(), { title: '', defaultMetrics: undefined, runDays: undefined })
 
-use([LineChart, GridComponent, LegendComponent, TooltipComponent, TitleComponent, CanvasRenderer])
+use([LineChart, BarChart, GridComponent, LegendComponent, TooltipComponent, TitleComponent, GraphicComponent, CanvasRenderer])
 
 const chartEl = ref<HTMLElement>()
 let chart: echarts.ECharts | undefined
@@ -51,8 +59,15 @@ const TOP = 34
 const BOTTOM = 26
 const LEFT = 56
 const RIGHT = 20
+/** The run strip: a thin band under the last panel, sharing its date axis. */
+const STRIP_HEIGHT = 10
+const STRIP_GAP = 10
 
 const selectedKeys = ref<string[]>([...props.defaultMetrics ?? props.metrics.slice(0, 2).map(m => m.key)])
+const runByDate = computed(() => new Map((props.runDays ?? []).map(day => [day.date, day])))
+const showRunStrip = computed(() => (props.runDays?.length ?? 0) > 0)
+/** Scale for the strip's bar heights; at least 1 so a no-change run still gets a cell. */
+const maxRunChanges = computed(() => Math.max(1, ...(props.runDays ?? []).map(day => day.changes)))
 
 function metricFor(key: string): TrendMetric | undefined {
   return props.metrics.find(m => m.key === key)
@@ -79,8 +94,9 @@ function panelGroups(keys: readonly string[]): Panel[] {
 }
 
 /** Pixel height of the plot area, so a panel is never squeezed by its neighbours. */
-function chartHeight(panels: Panel[]) {
-  return TOP + BOTTOM + panels.length * PANEL_HEIGHT + Math.max(0, panels.length - 1) * PANEL_GAP
+function chartHeight(panels: Panel[], withStrip = false) {
+  const base = TOP + BOTTOM + panels.length * PANEL_HEIGHT + Math.max(0, panels.length - 1) * PANEL_GAP
+  return withStrip ? base + STRIP_GAP + STRIP_HEIGHT : base
 }
 
 /** A metric value in its own unit, compact (K/M/B) like every other chart's tooltip. */
@@ -99,6 +115,21 @@ function formatAxis(unit: PanelUnit, value: number): string {
   if (unit === 'percent')
     return `${value.toFixed(1)}%`
   return formatMetric(value, { currency: unit === 'currency' })
+}
+
+/**
+ * One chart token at a given alpha.
+ *
+ * Used for the strip's fill: it is an annotation about the schedule, so it wears the
+ * muted ink at partial opacity rather than a palette colour that would read as another
+ * measure.
+ */
+function withAlpha(color: string, alpha: number): string {
+  const match = color.match(/rgba?\(([^)]+)\)/)
+  if (!match)
+    return color
+  const [r, g, b] = match[1].split(',').map(Number)
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
 }
 
 /**
@@ -131,6 +162,80 @@ function renderChart() {
     panel.metrics.map(metric => ({ key: metric.key, metric, panelIndex })),
   )
   const axisStyle = { color: muted, fontSize: 10 }
+  const withStrip = showRunStrip.value
+  const stripIndex = panels.length
+  const stripTop = TOP + (panels.length - 1) * (PANEL_HEIGHT + PANEL_GAP) + PANEL_HEIGHT + STRIP_GAP
+
+  const grids: any[] = panels.map((_, index) => ({
+    top: TOP + index * (PANEL_HEIGHT + PANEL_GAP),
+    height: PANEL_HEIGHT,
+    left: LEFT,
+    right: RIGHT,
+  }))
+  if (withStrip)
+    grids.push({ top: stripTop, height: STRIP_HEIGHT, left: LEFT, right: RIGHT })
+
+  // Without a strip the bottom panel labels the dates; with one the strip does, so the
+  // labels stay attached to the band they describe.
+  const xAxes: any[] = panels.map((_, index) => ({
+    type: 'category',
+    gridIndex: index,
+    data: dates,
+    boundaryGap: false,
+    axisLabel: { show: !withStrip && index === panels.length - 1, ...axisStyle },
+    axisTick: { show: !withStrip && index === panels.length - 1 },
+    axisLine: { lineStyle: { color: border } },
+  }))
+  if (withStrip) {
+    xAxes.push({
+      type: 'category',
+      gridIndex: stripIndex,
+      data: dates,
+      boundaryGap: false,
+      axisLabel: { show: true, ...axisStyle },
+      axisTick: { show: true },
+      axisLine: { lineStyle: { color: border } },
+    })
+  }
+
+  const yAxes: any[] = panels.map((panel, index) => ({
+    type: 'value',
+    gridIndex: index,
+    name: PANEL_LABEL[panel.unit],
+    nameLocation: 'end',
+    nameGap: 8,
+    nameTextStyle: { color: muted, fontSize: 11, fontWeight: 500, align: 'left' },
+    axisLabel: { ...axisStyle, formatter: (value: number) => formatAxis(panel.unit, value) },
+    splitLine: { lineStyle: { color: border } },
+  }))
+  if (withStrip)
+    yAxes.push({ type: 'value', gridIndex: stripIndex, max: 1, show: false })
+
+  // One bar per plotted day. The height is the day's change volume (square-root
+  // scaled), so a heavy-change day rises out of the band and a run that changed
+  // nothing is a thin line. Height rather than colour: a 10px band's shade is hard to
+  // read, and ECharts did not reliably apply per-item colours on this series.
+  const runSeries = withStrip
+    ? [{
+        type: 'bar',
+        xAxisIndex: stripIndex,
+        yAxisIndex: stripIndex,
+        barWidth: '96%',
+        data: props.rows.map((row) => {
+          const run = runByDate.value.get(String(row.date))
+          if (!run)
+            return 0
+          return run.changes > 0 ? 0.25 + 0.75 * Math.sqrt(run.changes / maxRunChanges.value) : 0.12
+        }),
+        itemStyle: { color: withAlpha(muted, 0.45) },
+        emphasis: { disabled: true },
+      }]
+    : []
+
+  // The band needs a name in the chart, not only in the caption below it.
+  const stripLabel = withStrip
+    ? [{ type: 'text', left: 0, top: stripTop - 2, style: { text: '执行', fill: muted, fontSize: 10 } }]
+    : []
 
   // `notMerge` (the second argument): ECharts merges by default, so a series or a
   // panel that is no longer selected would stay in the option and keep being drawn -
@@ -138,8 +243,9 @@ function renderChart() {
   // the complete option, so replacing is the only correct merge.
   chart.setOption({
     color: palette,
+    graphic: stripLabel,
     title: { text: props.title, left: 0, top: 0, textStyle: { fontSize: 12, fontWeight: 500, color: muted } },
-    legend: { top: 0, right: 0, textStyle: { fontSize: 12, color: muted } },
+    legend: { top: 0, right: 0, data: seriesPlan.map(s => s.metric.label), textStyle: { fontSize: 12, color: muted } },
     // Linked pointers: hovering any panel draws the same date in all of them, which is
     // what makes a spike in one unit readable against the others.
     axisPointer: { link: [{ xAxisIndex: 'all' }] },
@@ -157,45 +263,30 @@ function renderChart() {
         // Compact (K/M/B) like every other chart's tooltip: four exact figures
         // ("202,942,562") in one tooltip is a wall of digits nobody reads.
         const lines = seriesPlan.map((s, index) => `${marker(palette[index % palette.length] ?? muted)}${s.metric.label}: ${formatValue(s.key, row[s.key])}`)
+        // The run strip is a mark, not a series; its reading belongs in the same tooltip.
+        if (withStrip) {
+          const run = runByDate.value.get(String(row.date))
+          lines.push(`<span style="color:${muted}">执行：${run ? `${run.runs} 次 · ${formatMetric(run.changes, {})} 项调整` : '无'}</span>`)
+        }
         return `<div style="margin-bottom:2px">${items[0].axisValue}</div>${lines.join('<br>')}`
       },
     },
-    grid: panels.map((_, index) => ({
-      top: TOP + index * (PANEL_HEIGHT + PANEL_GAP),
-      height: PANEL_HEIGHT,
-      left: LEFT,
-      right: RIGHT,
-    })),
-    xAxis: panels.map((_, index) => ({
-      type: 'category' as const,
-      gridIndex: index,
-      data: dates,
-      boundaryGap: false,
-      // Only the bottom panel labels the dates; the linked pointer carries the reading up.
-      axisLabel: { show: index === panels.length - 1, ...axisStyle },
-      axisTick: { show: index === panels.length - 1 },
-      axisLine: { lineStyle: { color: border } },
-    })),
-    yAxis: panels.map((panel, index) => ({
-      type: 'value' as const,
-      gridIndex: index,
-      name: PANEL_LABEL[panel.unit],
-      nameLocation: 'end',
-      nameGap: 8,
-      nameTextStyle: { color: muted, fontSize: 11, fontWeight: 500, align: 'left' },
-      axisLabel: { ...axisStyle, formatter: (value: number) => formatAxis(panel.unit, value) },
-      splitLine: { lineStyle: { color: border } },
-    })),
-    series: seriesPlan.map(s => ({
-      name: s.metric.label,
-      type: 'line' as const,
-      smooth: true,
-      showSymbol: false,
-      lineStyle: { width: 2 },
-      xAxisIndex: s.panelIndex,
-      yAxisIndex: s.panelIndex,
-      data: props.rows.map(row => Number(row[s.key] ?? 0)),
-    })),
+    grid: grids,
+    xAxis: xAxes,
+    yAxis: yAxes,
+    series: [
+      ...seriesPlan.map(s => ({
+        name: s.metric.label,
+        type: 'line' as const,
+        smooth: true,
+        showSymbol: false,
+        lineStyle: { width: 2 },
+        xAxisIndex: s.panelIndex,
+        yAxisIndex: s.panelIndex,
+        data: props.rows.map(row => Number(row[s.key] ?? 0)),
+      })),
+      ...runSeries,
+    ],
   }, true)
   // A panel was added or removed: the container must grow with it before the next paint.
   chart.resize()
@@ -205,7 +296,7 @@ function resize() { chart?.resize() }
 onMounted(() => { renderChart(); window.addEventListener('resize', resize) })
 // flush: 'post' matters: the canvas sits behind a v-if, so a watcher that runs
 // before the re-render would see no element to draw into on the first data load.
-watch(() => [props.title, props.rows, props.metrics], renderChart, { deep: true, flush: 'post' })
+watch(() => [props.title, props.rows, props.metrics, props.runDays], renderChart, { deep: true, flush: 'post' })
 watch(selectedKeys, renderChart, { deep: true, flush: 'post' })
 onBeforeUnmount(() => { window.removeEventListener('resize', resize); chart?.dispose() })
 </script>
@@ -225,6 +316,6 @@ onBeforeUnmount(() => { window.removeEventListener('resize', resize); chart?.dis
     <div v-else-if="!selectedKeys.length" class="flex h-24 items-center justify-center text-sm text-muted-foreground">
       请至少选择一个指标
     </div>
-    <div v-else ref="chartEl" class="w-full" :style="{ height: `${chartHeight(panelGroups(selectedKeys))}px` }" role="img" :aria-label="title" />
+    <div v-else ref="chartEl" class="w-full" :style="{ height: `${chartHeight(panelGroups(selectedKeys), showRunStrip)}px` }" role="img" :aria-label="title" />
   </div>
 </template>
